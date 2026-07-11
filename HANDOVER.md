@@ -36,6 +36,7 @@ cmake --build build -j 8
 - 表结构（概要）
   - `profiles`：Profile 基础信息（name/group/remark/status/created_at/last_open_at 等）
   - `proxy_configs`：代理配置（enabled/type/host/port/username/password）
+  - `proxies` / `proxy_assignments`：代理池与分配关系（一个代理同一时刻最多分配给一个 Profile）
   - `vpn_openvpn_configs`：OpenVPN 配置（exe/config/socks 等）
   - `profile_runs`：运行事件（start/stop/vpn.status 等）
   - `logs`：日志归档
@@ -107,6 +108,7 @@ cmake --build build -j 8
 - Profile：新建/删除/选择，字段编辑落库，列表列已扩展；支持分组/关键字过滤与“仅看勾选”
 - IPC：app↔agent 本地 socket JSON 帧协议，支持重连
 - 代理：配置 + 单测/批量“测试代理”链路跑通（并发/队列/超时/取消 + 防串包）
+- 代理池：已支持导入/列表/一键分配/释放/换一个；支持批量健康自检并写回 last_ok/last_ip；分配时会在没有健康空闲代理的情况下自动触发一次“空闲代理健康自检”作为兜底
 - VPN：OpenVPN（可选 SOCKS）启动/停止 + 日志/状态回传链路跑通
 - 自动化：新增 Smoke Test，可用于回归关键链路（弱依赖外网可用性）
 
