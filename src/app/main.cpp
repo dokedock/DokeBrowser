@@ -1,14 +1,20 @@
 #include <QGuiApplication>
 #include <QIcon>
 #include <QQmlApplicationEngine>
+#include <QQmlContext>
 #include <QQuickStyle>
+
+#include "core/AppController.h"
 
 int main(int argc, char* argv[]) {
   QGuiApplication app(argc, argv);
   QQuickStyle::setStyle(QStringLiteral("Fusion"));
   QGuiApplication::setWindowIcon(QIcon(QStringLiteral(":/assets/DKIcon.png")));
 
+  AppController controller;
+
   QQmlApplicationEngine engine;
+  engine.rootContext()->setContextProperty(QStringLiteral("AppController"), &controller);
   const QUrl url(QStringLiteral("qrc:/qml/Main.qml"));
   QObject::connect(
       &engine,
@@ -24,4 +30,3 @@ int main(int argc, char* argv[]) {
 
   return app.exec();
 }
-

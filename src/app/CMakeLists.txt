@@ -1,12 +1,22 @@
 qt_add_executable(dokebrowser
   main.cpp
+  core/AppController.cpp
+  core/AppController.h
+  core/IpcClient.cpp
+  core/IpcClient.h
+  core/LogListModel.cpp
+  core/LogListModel.h
+  core/ProfileListModel.cpp
+  core/ProfileListModel.h
   qml/qml.qrc
   $<$<PLATFORM_ID:Windows>:win/app.rc>
 )
 
 target_link_libraries(dokebrowser PRIVATE
+  dokebrowser_shared
   Qt6::Core
   Qt6::Gui
+  Qt6::Network
   Qt6::Quick
   Qt6::Qml
   Qt6::QuickControls2
@@ -26,3 +36,10 @@ if(APPLE)
   endif()
 endif()
 
+add_dependencies(dokebrowser dokebrowser_agent)
+
+add_custom_command(TARGET dokebrowser POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    $<TARGET_FILE:dokebrowser_agent>
+    $<TARGET_FILE_DIR:dokebrowser>/
+)
