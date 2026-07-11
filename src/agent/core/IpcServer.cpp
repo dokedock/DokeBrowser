@@ -243,14 +243,21 @@ void IpcServer::onPeerJson(const QJsonObject& obj) {
         return;
       }
 
+      if (!m_profileStopRequested.contains(profileId)) {
+        m_profileStopRequested.insert(profileId);
+      }
       sendStatus(QStringLiteral("stopping"), QString());
       existing->terminate();
-      if (!existing->waitForFinished(800)) {
-        existing->kill();
-      }
-      sendStatus(QStringLiteral("stopped"), QString());
-      m_profileProcByProfileId.remove(profileId);
-      existing->deleteLater();
+      QTimer::singleShot(1200, this, [this, profileId]() {
+        QProcess* p = m_profileProcByProfileId.value(profileId);
+        if (!p) {
+          return;
+        }
+        if (p->state() == QProcess::NotRunning) {
+          return;
+        }
+        p->kill();
+      });
       return;
     }
 
@@ -269,6 +276,11 @@ void IpcServer::onPeerJson(const QJsonObject& obj) {
     QObject::connect(p, &QProcess::started, this, [sendStatus]() { sendStatus(QStringLiteral("running"), QString()); });
     QObject::connect(p, &QProcess::finished, this, [this, profileId, sendStatus](int exitCode, QProcess::ExitStatus st) {
       m_profileProcByProfileId.remove(profileId);
+      const bool expectedStop = m_profileStopRequested.remove(profileId);
+      if (expectedStop) {
+        sendStatus(QStringLiteral("stopped"), QString());
+        return;
+      }
       if (st == QProcess::CrashExit) {
         sendStatus(QStringLiteral("crashed"), QStringLiteral("crash_exit"));
       } else if (exitCode == 0) {
@@ -304,6 +316,9 @@ void IpcServer::onPeerJson(const QJsonObject& obj) {
       }
     });
     QObject::connect(p, &QProcess::errorOccurred, this, [this, profileId, sendStatus](QProcess::ProcessError) mutable {
+      if (m_profileStopRequested.contains(profileId)) {
+        return;
+      }
       sendStatus(QStringLiteral("error"), QStringLiteral("process_error"));
       if (m_peer) {
         QJsonObject log;
@@ -339,6 +354,12 @@ void IpcServer::onPeerJson(const QJsonObject& obj) {
     args << QStringLiteral("--no-default-browser-check");
     args << QStringLiteral("--disable-sync");
     args << QStringLiteral("--new-window");
+    if (qEnvironmentVariableIntValue("DOKEBROWSER_CHROME_COMPAT") == 1) {
+      args << QStringLiteral("--no-sandbox");
+      args << QStringLiteral("--disable-gpu");
+      args << QStringLiteral("--disable-software-rasterizer");
+      args << QStringLiteral("--disable-dev-shm-usage");
+    }
 
     const QString proxyArg = buildProxyArg();
     if (!proxyArg.isEmpty()) {

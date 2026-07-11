@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QHash>
+#include <QSet>
 #include <QObject>
 #include <QJsonObject>
 
@@ -31,4 +32,5 @@ private:
   QHash<QString, QProcess*> m_openvpnByProfileId;
   QHash<QString, QString> m_openvpnSocksAuthFileByProfileId;
   QHash<QString, QProcess*> m_profileProcByProfileId;
+  QSet<QString> m_profileStopRequested;
 };
