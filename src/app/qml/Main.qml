@@ -65,7 +65,10 @@ ApplicationWindow {
                     Button {
                         Layout.fillWidth: true
                         text: "代理池"
-                        enabled: false
+                        onClicked: {
+                            AppController.refreshProxyPool()
+                            proxyPoolDialog.open()
+                        }
                     }
                     Button {
                         Layout.fillWidth: true
@@ -91,6 +94,128 @@ ApplicationWindow {
                         spacing: 8
                         Button { Layout.fillWidth: true; text: "启动"; onClicked: AppController.startAgent() }
                         Button { Layout.fillWidth: true; text: "停止"; enabled: AppController.agentRunning; onClicked: AppController.stopAgent() }
+                    }
+                }
+            }
+        }
+
+        Dialog {
+            id: proxyPoolDialog
+            modal: true
+            title: "代理池"
+            width: 980
+            height: 640
+            anchors.centerIn: parent
+
+            background: Rectangle {
+                color: theme.card
+                radius: theme.radius
+                border.width: 1
+                border.color: theme.border
+            }
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 12
+                spacing: 10
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+                    Button { text: "刷新"; onClicked: AppController.refreshProxyPool() }
+                    Button {
+                        text: "导入"
+                        onClicked: {
+                            AppController.importProxyPool(proxyImportText.text)
+                            proxyImportText.text = ""
+                        }
+                    }
+                    Button { text: "一键分配（勾选）"; onClicked: AppController.assignProxyPoolToCheckedProfiles() }
+                    Button { text: "一键释放（勾选）"; onClicked: AppController.releaseProxyPoolFromCheckedProfiles() }
+                    Button { text: "换一个（当前）"; onClicked: AppController.rotateProxyForSelectedProfile() }
+                    Item { Layout.fillWidth: true }
+                    Button { text: "关闭"; onClicked: proxyPoolDialog.close() }
+                }
+
+                TextArea {
+                    id: proxyImportText
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 120
+                    placeholderText: "每行一个代理：\nhttp://user:pass@host:port\nhttps://host:port\nsocks5://user:pass@host:port\n或：host:port:user:pass（默认 http）"
+                    wrapMode: TextArea.Wrap
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    radius: theme.radius
+                    color: "#fafafa"
+                    border.width: 1
+                    border.color: theme.border
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 10
+                        spacing: 8
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10
+                            Label { text: "状态"; Layout.preferredWidth: 80; color: theme.text2 }
+                            Label { text: "类型"; Layout.preferredWidth: 80; color: theme.text2 }
+                            Label { text: "地址"; Layout.preferredWidth: 260; color: theme.text2 }
+                            Label { text: "账号"; Layout.preferredWidth: 160; color: theme.text2 }
+                            Label { text: "最近IP"; Layout.preferredWidth: 160; color: theme.text2 }
+                            Label { text: "占用"; Layout.fillWidth: true; color: theme.text2 }
+                        }
+
+                        ListView {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            clip: true
+                            model: AppController.proxyPool
+                            delegate: Rectangle {
+                                required property string proxyId
+                                required property string proxyType
+                                required property string proxyHost
+                                required property int proxyPort
+                                required property string proxyUsername
+                                required property bool proxyDisabled
+                                required property bool proxyLastOk
+                                required property string proxyLastIp
+                                required property string proxyAssignedProfileId
+
+                                width: ListView.view.width
+                                height: 40
+                                radius: theme.radius
+                                color: "#ffffff"
+                                border.width: 1
+                                border.color: theme.border
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 10
+                                    anchors.rightMargin: 10
+                                    spacing: 10
+
+                                    Label {
+                                        Layout.preferredWidth: 80
+                                        text: proxyDisabled ? "禁用" : (proxyAssignedProfileId.length > 0 ? "占用" : "空闲")
+                                        color: proxyDisabled ? "#cf1322" : (proxyAssignedProfileId.length > 0 ? "#fa8c16" : "#389e0d")
+                                    }
+                                    Label { Layout.preferredWidth: 80; text: proxyType; color: theme.text2 }
+                                    Label { Layout.preferredWidth: 260; text: proxyHost + ":" + proxyPort; elide: Text.ElideRight; color: theme.text }
+                                    Label { Layout.preferredWidth: 160; text: proxyUsername.length > 0 ? proxyUsername : "-"; elide: Text.ElideRight; color: theme.text2 }
+                                    Label { Layout.preferredWidth: 160; text: proxyLastIp.length > 0 ? proxyLastIp : (proxyLastOk ? "-" : "-"); elide: Text.ElideRight; color: proxyLastOk ? "#52c41a" : theme.text2 }
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: proxyAssignedProfileId.length > 0 ? proxyAssignedProfileId : "-"
+                                        elide: Text.ElideRight
+                                        color: theme.text2
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

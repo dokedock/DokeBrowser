@@ -9,6 +9,23 @@
 
 class ProfileRepository final : public QObject {
 public:
+  struct ProxyPoolItem {
+    QString id;
+    QString type;
+    QString host;
+    int port = 0;
+    QString username;
+    QString password;
+    QString remark;
+    bool disabled = false;
+    qint64 createdAtMs = 0;
+    bool lastOk = false;
+    QString lastIp;
+    QString lastError;
+    qint64 lastAtMs = 0;
+    QString assignedProfileId;
+  };
+
   explicit ProfileRepository(QObject* parent = nullptr);
   ~ProfileRepository() override;
 
@@ -71,6 +88,13 @@ public:
                              qint64 toTsMs,
                              int limit,
                              QString* error = nullptr);
+
+  QVector<ProxyPoolItem> loadProxyPool(QString* error = nullptr);
+  int importProxyPool(const QStringList& lines, QString* error = nullptr);
+  bool assignProxyToProfile(const QString& proxyId, const QString& profileId, QString* error = nullptr);
+  bool assignNextAvailableProxyToProfile(const QString& profileId, QString* error = nullptr);
+  bool releaseProxyFromProfile(const QString& profileId, QString* error = nullptr);
+  bool rotateProxyForProfile(const QString& profileId, QString* error = nullptr);
 
 private:
   bool enforceRetention(const QString& profileId, QString* error = nullptr);

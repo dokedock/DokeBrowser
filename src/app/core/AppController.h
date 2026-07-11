@@ -8,6 +8,7 @@
 
 #include "LogListModel.h"
 #include "ProfileListModel.h"
+#include "ProxyPoolModel.h"
 
 class IpcClient;
 class ProfileFilterModel;
@@ -22,6 +23,7 @@ class AppController : public QObject {
   Q_PROPERTY(ProfileListModel* profiles READ profiles CONSTANT)
   Q_PROPERTY(QAbstractItemModel* filteredProfiles READ filteredProfiles CONSTANT)
   Q_PROPERTY(LogListModel* logs READ logs CONSTANT)
+  Q_PROPERTY(ProxyPoolModel* proxyPool READ proxyPool CONSTANT)
   Q_PROPERTY(QStringList groups READ groups NOTIFY groupsChanged)
   Q_PROPERTY(QStringList checkedProfileIds READ checkedProfileIds NOTIFY checkedProfileIdsChanged)
   Q_PROPERTY(bool showOnlyChecked READ showOnlyChecked NOTIFY showOnlyCheckedChanged)
@@ -83,6 +85,7 @@ public:
   ProfileListModel* profiles();
   QAbstractItemModel* filteredProfiles();
   LogListModel* logs();
+  ProxyPoolModel* proxyPool();
   QStringList groups() const;
   QStringList checkedProfileIds() const;
   bool showOnlyChecked() const;
@@ -199,6 +202,12 @@ public:
   Q_INVOKABLE void invertCheckedGroupProfiles(const QString& group);
   Q_INVOKABLE void setShowOnlyChecked(bool enabled);
 
+  Q_INVOKABLE void refreshProxyPool();
+  Q_INVOKABLE int importProxyPool(const QString& text);
+  Q_INVOKABLE void assignProxyPoolToCheckedProfiles();
+  Q_INVOKABLE void releaseProxyPoolFromCheckedProfiles();
+  Q_INVOKABLE void rotateProxyForSelectedProfile();
+
 signals:
   void selectedProfileIndexChanged();
   void selectedProfileChanged();
@@ -239,6 +248,7 @@ private:
   ProfileListModel* m_profiles = nullptr;
   ProfileFilterModel* m_filtered = nullptr;
   LogListModel* m_logs = nullptr;
+  ProxyPoolModel* m_proxyPool = nullptr;
   QStringList m_groups;
   QString m_groupFilter = QStringLiteral("所有分组");
   QString m_searchKeyword;

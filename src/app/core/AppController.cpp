@@ -5,6 +5,7 @@
 #include "ProfileFilterModel.h"
 #include "ProfileListModel.h"
 #include "ProfileRepository.h"
+#include "ProxyPoolModel.h"
 
 #include <algorithm>
 #include <QCoreApplication>
@@ -55,6 +56,7 @@ AppController::AppController(QObject* parent) : QObject(parent) {
   m_filtered = new ProfileFilterModel(this);
   m_filtered->setSourceModel(m_profiles);
   m_logs = new LogListModel(this);
+  m_proxyPool = new ProxyPoolModel(this);
   m_ipc = new IpcClient(this);
   m_repo = new ProfileRepository(this);
 
@@ -145,6 +147,7 @@ AppController::AppController(QObject* parent) : QObject(parent) {
   });
 
   loadProfiles();
+  refreshProxyPool();
   rebuildGroups();
   applyFilters();
   if (m_profiles->rowCount() > 0) {
@@ -166,6 +169,10 @@ QAbstractItemModel* AppController::filteredProfiles() {
 
 LogListModel* AppController::logs() {
   return m_logs;
+}
+
+ProxyPoolModel* AppController::proxyPool() {
+  return m_proxyPool;
 }
 
 QStringList AppController::groups() const {
@@ -998,6 +1005,194 @@ void AppController::resetFilters() {
   m_groupFilter = QStringLiteral("所有分组");
   m_searchKeyword.clear();
   applyFilters();
+}
+
+void AppController::refreshProxyPool() {
+  if (!m_repo || !m_proxyPool) {
+    return;
+  }
+  QString err;
+  const auto items = m_repo->loadProxyPool(&err);
+  if (!err.isEmpty()) {
+    appendLogLine(QStringLiteral("proxy_pool_load_error: %1").arg(err), QStringLiteral("db"));
+    return;
+  }
+  m_proxyPool->setItems(items);
+}
+
+int AppController::importProxyPool(const QString& text) {
+  if (!m_repo) {
+    return 0;
+  }
+  const QStringList lines = text.split('\n');
+  QString err;
+  const int n = m_repo->importProxyPool(lines, &err);
+  if (!err.isEmpty()) {
+    appendLogLine(QStringLiteral("proxy_pool_import_error: %1").arg(err), QStringLiteral("db"));
+    return 0;
+  }
+  appendLogLine(QStringLiteral("proxy_pool_imported n=%1").arg(n), QStringLiteral("ui"));
+  refreshProxyPool();
+  return n;
+}
+
+void AppController::assignProxyPoolToCheckedProfiles() {
+  if (!m_repo) {
+    return;
+  }
+  const QStringList targets = m_checkedIds.isEmpty() ? QStringList{selectedProfileId()} : m_checkedIds;
+  if (targets.isEmpty() || (targets.size() == 1 && targets.at(0).isEmpty())) {
+    return;
+  }
+
+  int okN = 0;
+  int failN = 0;
+  QSet<QString> updatedIds;
+  for (const auto& id : targets) {
+    const QString pid = id.trimmed();
+    if (pid.isEmpty()) {
+      continue;
+    }
+    QString err;
+    if (!m_repo->assignNextAvailableProxyToProfile(pid, &err)) {
+      appendLogLine(QStringLiteral("proxy_pool_assign_failed: %1").arg(err), QStringLiteral("proxy"), pid);
+      failN++;
+      continue;
+    }
+    okN++;
+    updatedIds.insert(pid);
+  }
+
+  if (!updatedIds.isEmpty()) {
+    QString loadErr;
+    const auto all = m_repo->loadAll(&loadErr);
+    if (!loadErr.isEmpty()) {
+      appendLogLine(QStringLiteral("profiles_db_error: %1").arg(loadErr), QStringLiteral("db"));
+    } else {
+      QHash<QString, ProfileListModel::ProfileItem> map;
+      map.reserve(all.size());
+      for (const auto& it : all) {
+        map.insert(it.id, it);
+      }
+      for (int i = 0; i < m_profiles->items().size(); i++) {
+        const auto& cur = m_profiles->items().at(i);
+        if (!updatedIds.contains(cur.id)) {
+          continue;
+        }
+        const auto fresh = map.value(cur.id);
+        auto updated = cur;
+        updated.proxyEnabled = fresh.proxyEnabled;
+        updated.proxyType = fresh.proxyType;
+        updated.proxyHost = fresh.proxyHost;
+        updated.proxyPort = fresh.proxyPort;
+        updated.proxyUsername = fresh.proxyUsername;
+        updated.proxyPassword = fresh.proxyPassword;
+        m_profiles->updateAt(i, updated);
+      }
+      if (updatedIds.contains(selectedProfileId())) {
+        emit selectedProfileChanged();
+      }
+    }
+  }
+  appendLogLine(QStringLiteral("proxy_pool_assign done ok=%1 fail=%2").arg(okN).arg(failN), QStringLiteral("proxy"));
+  refreshProxyPool();
+}
+
+void AppController::releaseProxyPoolFromCheckedProfiles() {
+  if (!m_repo) {
+    return;
+  }
+  const QStringList targets = m_checkedIds.isEmpty() ? QStringList{selectedProfileId()} : m_checkedIds;
+  if (targets.isEmpty() || (targets.size() == 1 && targets.at(0).isEmpty())) {
+    return;
+  }
+
+  int okN = 0;
+  int failN = 0;
+  for (const auto& id : targets) {
+    const QString pid = id.trimmed();
+    if (pid.isEmpty()) {
+      continue;
+    }
+    QString err;
+    if (!m_repo->releaseProxyFromProfile(pid, &err)) {
+      appendLogLine(QStringLiteral("proxy_pool_release_failed: %1").arg(err), QStringLiteral("proxy"), pid);
+      failN++;
+      continue;
+    }
+    okN++;
+    for (int i = 0; i < m_profiles->items().size(); i++) {
+      const auto& it = m_profiles->items().at(i);
+      if (it.id != pid) {
+        continue;
+      }
+      auto updated = it;
+      updated.proxyEnabled = false;
+      updated.proxyType = QStringLiteral("direct");
+      updated.proxyHost.clear();
+      updated.proxyPort = 0;
+      updated.proxyUsername.clear();
+      updated.proxyPassword.clear();
+      m_profiles->updateAt(i, updated);
+      if (pid == selectedProfileId()) {
+        emit selectedProfileChanged();
+      }
+      break;
+    }
+  }
+  appendLogLine(QStringLiteral("proxy_pool_release done ok=%1 fail=%2").arg(okN).arg(failN), QStringLiteral("proxy"));
+  refreshProxyPool();
+}
+
+void AppController::rotateProxyForSelectedProfile() {
+  if (!m_repo) {
+    return;
+  }
+  const QString pid = selectedProfileId().trimmed();
+  if (pid.isEmpty()) {
+    return;
+  }
+  QString err;
+  if (!m_repo->rotateProxyForProfile(pid, &err)) {
+    appendLogLine(QStringLiteral("proxy_pool_rotate_failed: %1").arg(err), QStringLiteral("proxy"), pid);
+    return;
+  }
+
+  QString loadErr;
+  const auto all = m_repo->loadAll(&loadErr);
+  if (!loadErr.isEmpty()) {
+    appendLogLine(QStringLiteral("profiles_db_error: %1").arg(loadErr), QStringLiteral("db"));
+  } else {
+    ProfileListModel::ProfileItem fresh;
+    bool found = false;
+    for (const auto& it : all) {
+      if (it.id == pid) {
+        fresh = it;
+        found = true;
+        break;
+      }
+    }
+    if (found) {
+      for (int i = 0; i < m_profiles->items().size(); i++) {
+        const auto& cur = m_profiles->items().at(i);
+        if (cur.id != pid) {
+          continue;
+        }
+        auto updated = cur;
+        updated.proxyEnabled = fresh.proxyEnabled;
+        updated.proxyType = fresh.proxyType;
+        updated.proxyHost = fresh.proxyHost;
+        updated.proxyPort = fresh.proxyPort;
+        updated.proxyUsername = fresh.proxyUsername;
+        updated.proxyPassword = fresh.proxyPassword;
+        m_profiles->updateAt(i, updated);
+        emit selectedProfileChanged();
+        break;
+      }
+    }
+  }
+  appendLogLine(QStringLiteral("proxy_pool_rotate ok"), QStringLiteral("proxy"), pid);
+  refreshProxyPool();
 }
 
 void AppController::setProfileChecked(const QString& profileId, bool checked) {

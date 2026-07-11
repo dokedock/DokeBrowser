@@ -10,6 +10,8 @@ qt_add_executable(dokebrowser
   core/ProfileFilterModel.h
   core/ProfileListModel.cpp
   core/ProfileListModel.h
+  core/ProxyPoolModel.cpp
+  core/ProxyPoolModel.h
   core/ProfileRepository.cpp
   core/ProfileRepository.h
   qml/qml.qrc

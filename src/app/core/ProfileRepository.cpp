@@ -8,7 +8,10 @@
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QStandardPaths>
+#include <QUrl>
 #include <QVariant>
+#include <QRegularExpression>
+#include <QUuid>
 
 namespace {
 bool execSql(QSqlDatabase& db, const QString& sql, QString* error) {
@@ -214,6 +217,50 @@ bool ProfileRepository::ensureSchema(QString* error) {
   if (!execSql(db,
                QStringLiteral(
                    "CREATE INDEX IF NOT EXISTS idx_proxy_test_runs_profile_ts ON proxy_test_runs(profile_id, ts_ms);"),
+               error)) {
+    return false;
+  }
+
+  if (!execSql(db,
+               QStringLiteral("CREATE TABLE IF NOT EXISTS proxies ("
+                              "id TEXT PRIMARY KEY NOT NULL,"
+                              "type TEXT NOT NULL DEFAULT 'http',"
+                              "host TEXT NOT NULL,"
+                              "port INTEGER NOT NULL,"
+                              "username TEXT NOT NULL DEFAULT '',"
+                              "password TEXT NOT NULL DEFAULT '',"
+                              "remark TEXT NOT NULL DEFAULT '',"
+                              "disabled INTEGER NOT NULL DEFAULT 0,"
+                              "created_at_ms INTEGER NOT NULL DEFAULT 0,"
+                              "last_ok INTEGER NOT NULL DEFAULT 0,"
+                              "last_ip TEXT NOT NULL DEFAULT '',"
+                              "last_error TEXT NOT NULL DEFAULT '',"
+                              "last_at_ms INTEGER NOT NULL DEFAULT 0"
+                              ");"),
+               error)) {
+    return false;
+  }
+
+  if (!execSql(db,
+               QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS idx_proxies_unique ON proxies(type, host, port, username);"),
+               error)) {
+    return false;
+  }
+
+  if (!execSql(db,
+               QStringLiteral("CREATE TABLE IF NOT EXISTS proxy_assignments ("
+                              "profile_id TEXT PRIMARY KEY NOT NULL,"
+                              "proxy_id TEXT NOT NULL,"
+                              "assigned_at_ms INTEGER NOT NULL DEFAULT 0,"
+                              "FOREIGN KEY(profile_id) REFERENCES profiles(id) ON DELETE CASCADE,"
+                              "FOREIGN KEY(proxy_id) REFERENCES proxies(id) ON DELETE RESTRICT"
+                              ");"),
+               error)) {
+    return false;
+  }
+
+  if (!execSql(db,
+               QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS idx_proxy_assignments_proxy ON proxy_assignments(proxy_id);"),
                error)) {
     return false;
   }
@@ -912,4 +959,546 @@ QStringList ProfileRepository::queryProxyTests(const QString& profileId,
 
   std::reverse(out.begin(), out.end());
   return out;
+}
+
+namespace {
+struct ParsedProxy {
+  QString type;
+  QString host;
+  int port = 0;
+  QString username;
+  QString password;
+  QString remark;
+};
+
+bool parseProxyLine(const QString& line, ParsedProxy* out) {
+  if (!out) {
+    return false;
+  }
+  const QString v = line.trimmed();
+  if (v.isEmpty()) {
+    return false;
+  }
+  if (v.startsWith('#')) {
+    return false;
+  }
+
+  if (v.contains(QStringLiteral("://"))) {
+    const QUrl url(v);
+    if (!url.isValid() || url.host().trimmed().isEmpty()) {
+      return false;
+    }
+    QString scheme = url.scheme().trimmed().toLower();
+    if (scheme == QStringLiteral("socks")) {
+      scheme = QStringLiteral("socks5");
+    }
+    if (scheme != QStringLiteral("http") && scheme != QStringLiteral("https") && scheme != QStringLiteral("socks5")) {
+      return false;
+    }
+    const int port = url.port(0);
+    if (port <= 0) {
+      return false;
+    }
+    out->type = scheme;
+    out->host = url.host().trimmed();
+    out->port = port;
+    out->username = url.userName();
+    out->password = url.password();
+    out->remark.clear();
+    return true;
+  }
+
+  static QRegularExpression re(
+      QStringLiteral("^\\s*(?:(http|https|socks5)\\s+)?([^\\s:]+)\\s*:\\s*(\\d+)(?::([^:\\s]+))?(?::([^\\s]+))?(?:\\s+(.*))?$"),
+      QRegularExpression::CaseInsensitiveOption);
+  const QRegularExpressionMatch m = re.match(v);
+  if (!m.hasMatch()) {
+    return false;
+  }
+  const QString t = m.captured(1).trimmed().toLower();
+  const QString host = m.captured(2).trimmed();
+  const int port = m.captured(3).toInt();
+  if (host.isEmpty() || port <= 0) {
+    return false;
+  }
+  out->type = t.isEmpty() ? QStringLiteral("http") : t;
+  out->host = host;
+  out->port = port;
+  out->username = m.captured(4);
+  out->password = m.captured(5);
+  out->remark = m.captured(6).trimmed();
+  return true;
+}
+
+bool loadProxyById(QSqlDatabase& db,
+                   const QString& proxyId,
+                   ProfileRepository::ProxyPoolItem* out,
+                   QString* error) {
+  if (proxyId.trimmed().isEmpty()) {
+    if (error) {
+      *error = QStringLiteral("missing_proxy_id");
+    }
+    return false;
+  }
+
+  QSqlQuery q(db);
+  q.prepare(QStringLiteral("SELECT id, type, host, port, username, password, remark, disabled, created_at_ms, last_ok, "
+                           "last_ip, last_error, last_at_ms FROM proxies WHERE id = ?"));
+  q.addBindValue(proxyId.trimmed());
+  if (!q.exec()) {
+    if (error) {
+      *error = q.lastError().text();
+    }
+    return false;
+  }
+  if (!q.next()) {
+    if (error) {
+      *error = QStringLiteral("proxy_not_found");
+    }
+    return false;
+  }
+
+  ProfileRepository::ProxyPoolItem it;
+  it.id = q.value(0).toString();
+  it.type = q.value(1).toString();
+  it.host = q.value(2).toString();
+  it.port = q.value(3).toInt();
+  it.username = q.value(4).toString();
+  it.password = q.value(5).toString();
+  it.remark = q.value(6).toString();
+  it.disabled = q.value(7).toInt() != 0;
+  it.createdAtMs = q.value(8).toLongLong();
+  it.lastOk = q.value(9).toInt() != 0;
+  it.lastIp = q.value(10).toString();
+  it.lastError = q.value(11).toString();
+  it.lastAtMs = q.value(12).toLongLong();
+  if (out) {
+    *out = it;
+  }
+  return true;
+}
+
+bool upsertProxyConfigForProfile(QSqlDatabase& db,
+                                const QString& profileId,
+                                bool enabled,
+                                const QString& type,
+                                const QString& host,
+                                int port,
+                                const QString& username,
+                                const QString& password,
+                                QString* error) {
+  QSqlQuery q(db);
+  q.prepare(QStringLiteral(
+      "INSERT INTO proxy_configs (profile_id, enabled, type, host, port, username, password) "
+      "VALUES (?, ?, ?, ?, ?, ?, ?) "
+      "ON CONFLICT(profile_id) DO UPDATE SET enabled=excluded.enabled, type=excluded.type, host=excluded.host, port=excluded.port, "
+      "username=excluded.username, password=excluded.password"));
+  q.addBindValue(profileId);
+  q.addBindValue(enabled ? 1 : 0);
+  q.addBindValue(type);
+  q.addBindValue(host);
+  q.addBindValue(port);
+  q.addBindValue(username);
+  q.addBindValue(password);
+  if (!q.exec()) {
+    if (error) {
+      *error = q.lastError().text();
+    }
+    return false;
+  }
+  return true;
+}
+} // namespace
+
+QVector<ProfileRepository::ProxyPoolItem> ProfileRepository::loadProxyPool(QString* error) {
+  QVector<ProxyPoolItem> out;
+  if (!ensureSchema(error)) {
+    return out;
+  }
+  QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+  QSqlQuery q(db);
+  q.prepare(QStringLiteral(
+      "SELECT p.id, p.type, p.host, p.port, p.username, p.password, p.remark, p.disabled, p.created_at_ms, "
+      "p.last_ok, p.last_ip, p.last_error, p.last_at_ms, a.profile_id "
+      "FROM proxies p "
+      "LEFT JOIN proxy_assignments a ON a.proxy_id = p.id "
+      "ORDER BY p.created_at_ms DESC, p.rowid DESC"));
+  if (!q.exec()) {
+    if (error) {
+      *error = q.lastError().text();
+    }
+    return out;
+  }
+
+  while (q.next()) {
+    ProxyPoolItem it;
+    it.id = q.value(0).toString();
+    it.type = q.value(1).toString();
+    it.host = q.value(2).toString();
+    it.port = q.value(3).toInt();
+    it.username = q.value(4).toString();
+    it.password = q.value(5).toString();
+    it.remark = q.value(6).toString();
+    it.disabled = q.value(7).toInt() != 0;
+    it.createdAtMs = q.value(8).toLongLong();
+    it.lastOk = q.value(9).toInt() != 0;
+    it.lastIp = q.value(10).toString();
+    it.lastError = q.value(11).toString();
+    it.lastAtMs = q.value(12).toLongLong();
+    it.assignedProfileId = q.value(13).toString();
+    out.push_back(it);
+  }
+  return out;
+}
+
+int ProfileRepository::importProxyPool(const QStringList& lines, QString* error) {
+  if (!ensureSchema(error)) {
+    return 0;
+  }
+  QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+  if (!db.transaction()) {
+    if (error) {
+      *error = dbLastError(db);
+    }
+    return 0;
+  }
+
+  int n = 0;
+  const qint64 now = QDateTime::currentMSecsSinceEpoch();
+
+  QSqlQuery q(db);
+  q.prepare(QStringLiteral(
+      "INSERT INTO proxies (id, type, host, port, username, password, remark, disabled, created_at_ms) "
+      "VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?) "
+      "ON CONFLICT(type, host, port, username) DO UPDATE SET "
+      "password=excluded.password, remark=excluded.remark, disabled=0"));
+
+  for (const auto& line : lines) {
+    ParsedProxy p;
+    if (!parseProxyLine(line, &p)) {
+      continue;
+    }
+    const QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    q.addBindValue(id);
+    q.addBindValue(p.type);
+    q.addBindValue(p.host);
+    q.addBindValue(p.port);
+    q.addBindValue(nn(p.username));
+    q.addBindValue(nn(p.password));
+    q.addBindValue(nn(p.remark));
+    q.addBindValue(now);
+    if (!q.exec()) {
+      db.rollback();
+      if (error) {
+        *error = q.lastError().text();
+      }
+      return 0;
+    }
+    n++;
+  }
+
+  if (!db.commit()) {
+    if (error) {
+      *error = dbLastError(db);
+    }
+    return 0;
+  }
+  return n;
+}
+
+bool ProfileRepository::assignProxyToProfile(const QString& proxyId, const QString& profileId, QString* error) {
+  if (profileId.trimmed().isEmpty()) {
+    if (error) {
+      *error = QStringLiteral("missing_profile_id");
+    }
+    return false;
+  }
+  if (!ensureSchema(error)) {
+    return false;
+  }
+
+  QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+  if (!db.transaction()) {
+    if (error) {
+      *error = dbLastError(db);
+    }
+    return false;
+  }
+
+  ProxyPoolItem px;
+  QString e;
+  if (!loadProxyById(db, proxyId, &px, &e)) {
+    db.rollback();
+    if (error) {
+      *error = e;
+    }
+    return false;
+  }
+  if (px.disabled) {
+    db.rollback();
+    if (error) {
+      *error = QStringLiteral("proxy_disabled");
+    }
+    return false;
+  }
+
+  {
+    QSqlQuery chk(db);
+    chk.prepare(QStringLiteral("SELECT profile_id FROM proxy_assignments WHERE proxy_id = ?"));
+    chk.addBindValue(px.id);
+    if (!chk.exec()) {
+      db.rollback();
+      if (error) {
+        *error = chk.lastError().text();
+      }
+      return false;
+    }
+    if (chk.next()) {
+      db.rollback();
+      if (error) {
+        *error = QStringLiteral("proxy_already_assigned");
+      }
+      return false;
+    }
+  }
+
+  {
+    QSqlQuery del(db);
+    del.prepare(QStringLiteral("DELETE FROM proxy_assignments WHERE profile_id = ?"));
+    del.addBindValue(profileId.trimmed());
+    if (!del.exec()) {
+      db.rollback();
+      if (error) {
+        *error = del.lastError().text();
+      }
+      return false;
+    }
+  }
+
+  {
+    QSqlQuery ins(db);
+    ins.prepare(QStringLiteral("INSERT INTO proxy_assignments(profile_id, proxy_id, assigned_at_ms) VALUES(?, ?, ?)"));
+    ins.addBindValue(profileId.trimmed());
+    ins.addBindValue(px.id);
+    ins.addBindValue(QDateTime::currentMSecsSinceEpoch());
+    if (!ins.exec()) {
+      db.rollback();
+      if (error) {
+        *error = ins.lastError().text();
+      }
+      return false;
+    }
+  }
+
+  if (!upsertProxyConfigForProfile(db, profileId.trimmed(), true, px.type, px.host, px.port, px.username, px.password, &e)) {
+    db.rollback();
+    if (error) {
+      *error = e;
+    }
+    return false;
+  }
+
+  if (!db.commit()) {
+    if (error) {
+      *error = dbLastError(db);
+    }
+    return false;
+  }
+  return true;
+}
+
+bool ProfileRepository::assignNextAvailableProxyToProfile(const QString& profileId, QString* error) {
+  if (profileId.trimmed().isEmpty()) {
+    if (error) {
+      *error = QStringLiteral("missing_profile_id");
+    }
+    return false;
+  }
+  if (!ensureSchema(error)) {
+    return false;
+  }
+
+  QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+  QSqlQuery q(db);
+  q.prepare(QStringLiteral(
+      "SELECT id FROM proxies "
+      "WHERE disabled = 0 AND id NOT IN (SELECT proxy_id FROM proxy_assignments) "
+      "ORDER BY last_ok DESC, last_at_ms DESC, created_at_ms ASC, rowid ASC LIMIT 1"));
+  if (!q.exec()) {
+    if (error) {
+      *error = q.lastError().text();
+    }
+    return false;
+  }
+  if (!q.next()) {
+    if (error) {
+      *error = QStringLiteral("no_available_proxy");
+    }
+    return false;
+  }
+  const QString proxyId = q.value(0).toString();
+  return assignProxyToProfile(proxyId, profileId, error);
+}
+
+bool ProfileRepository::releaseProxyFromProfile(const QString& profileId, QString* error) {
+  if (profileId.trimmed().isEmpty()) {
+    if (error) {
+      *error = QStringLiteral("missing_profile_id");
+    }
+    return false;
+  }
+  if (!ensureSchema(error)) {
+    return false;
+  }
+
+  QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+  if (!db.transaction()) {
+    if (error) {
+      *error = dbLastError(db);
+    }
+    return false;
+  }
+
+  {
+    QSqlQuery del(db);
+    del.prepare(QStringLiteral("DELETE FROM proxy_assignments WHERE profile_id = ?"));
+    del.addBindValue(profileId.trimmed());
+    if (!del.exec()) {
+      db.rollback();
+      if (error) {
+        *error = del.lastError().text();
+      }
+      return false;
+    }
+  }
+
+  QString e;
+  if (!upsertProxyConfigForProfile(db, profileId.trimmed(), false, QStringLiteral("direct"), QString(), 0, QString(), QString(), &e)) {
+    db.rollback();
+    if (error) {
+      *error = e;
+    }
+    return false;
+  }
+
+  if (!db.commit()) {
+    if (error) {
+      *error = dbLastError(db);
+    }
+    return false;
+  }
+  return true;
+}
+
+bool ProfileRepository::rotateProxyForProfile(const QString& profileId, QString* error) {
+  if (profileId.trimmed().isEmpty()) {
+    if (error) {
+      *error = QStringLiteral("missing_profile_id");
+    }
+    return false;
+  }
+  if (!ensureSchema(error)) {
+    return false;
+  }
+
+  QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+  if (!db.transaction()) {
+    if (error) {
+      *error = dbLastError(db);
+    }
+    return false;
+  }
+
+  QString current;
+  {
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral("SELECT proxy_id FROM proxy_assignments WHERE profile_id = ?"));
+    q.addBindValue(profileId.trimmed());
+    if (!q.exec()) {
+      db.rollback();
+      if (error) {
+        *error = q.lastError().text();
+      }
+      return false;
+    }
+    if (q.next()) {
+      current = q.value(0).toString();
+    }
+  }
+
+  QSqlQuery pick(db);
+  pick.prepare(QStringLiteral(
+      "SELECT id FROM proxies "
+      "WHERE disabled = 0 AND id != :cur AND id NOT IN (SELECT proxy_id FROM proxy_assignments) "
+      "ORDER BY last_ok DESC, last_at_ms DESC, created_at_ms ASC, rowid ASC LIMIT 1"));
+  pick.bindValue(QStringLiteral(":cur"), current);
+  if (!pick.exec()) {
+    db.rollback();
+    if (error) {
+      *error = pick.lastError().text();
+    }
+    return false;
+  }
+  if (!pick.next()) {
+    db.rollback();
+    if (error) {
+      *error = QStringLiteral("no_available_proxy");
+    }
+    return false;
+  }
+  const QString nextId = pick.value(0).toString();
+
+  ProxyPoolItem px;
+  QString e;
+  if (!loadProxyById(db, nextId, &px, &e)) {
+    db.rollback();
+    if (error) {
+      *error = e;
+    }
+    return false;
+  }
+
+  {
+    QSqlQuery del(db);
+    del.prepare(QStringLiteral("DELETE FROM proxy_assignments WHERE profile_id = ?"));
+    del.addBindValue(profileId.trimmed());
+    if (!del.exec()) {
+      db.rollback();
+      if (error) {
+        *error = del.lastError().text();
+      }
+      return false;
+    }
+  }
+
+  {
+    QSqlQuery ins(db);
+    ins.prepare(QStringLiteral("INSERT INTO proxy_assignments(profile_id, proxy_id, assigned_at_ms) VALUES(?, ?, ?)"));
+    ins.addBindValue(profileId.trimmed());
+    ins.addBindValue(px.id);
+    ins.addBindValue(QDateTime::currentMSecsSinceEpoch());
+    if (!ins.exec()) {
+      db.rollback();
+      if (error) {
+        *error = ins.lastError().text();
+      }
+      return false;
+    }
+  }
+
+  if (!upsertProxyConfigForProfile(db, profileId.trimmed(), true, px.type, px.host, px.port, px.username, px.password, &e)) {
+    db.rollback();
+    if (error) {
+      *error = e;
+    }
+    return false;
+  }
+
+  if (!db.commit()) {
+    if (error) {
+      *error = dbLastError(db);
+    }
+    return false;
+  }
+  return true;
 }
