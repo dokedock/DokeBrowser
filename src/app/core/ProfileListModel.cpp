@@ -31,6 +31,10 @@ QVariant ProfileListModel::data(const QModelIndex& index, int role) const {
       return item.createdAtMs;
     case LastOpenAtMsRole:
       return item.lastOpenAtMs;
+    case ProxyLastIpRole:
+      return item.proxyLastObservedIp;
+    case ProxyLastOkRole:
+      return item.proxyLastOk;
     default:
       return {};
   }
@@ -45,6 +49,8 @@ QHash<int, QByteArray> ProfileListModel::roleNames() const {
       {StatusRole, "profileStatus"},
       {CreatedAtMsRole, "profileCreatedAtMs"},
       {LastOpenAtMsRole, "profileLastOpenAtMs"},
+      {ProxyLastIpRole, "profileProxyLastIp"},
+      {ProxyLastOkRole, "profileProxyLastOk"},
   };
 }
 

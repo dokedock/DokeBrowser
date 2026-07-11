@@ -1,20 +1,30 @@
 #pragma once
 
+#include <QAbstractItemModel>
 #include <QObject>
 #include <QHash>
+#include <QSet>
+#include <QStringList>
 
 #include "LogListModel.h"
 #include "ProfileListModel.h"
 
 class IpcClient;
+class ProfileFilterModel;
+class ProfileRepository;
 
 class QProcess;
+class QTimer;
 
 class AppController : public QObject {
   Q_OBJECT
 
   Q_PROPERTY(ProfileListModel* profiles READ profiles CONSTANT)
+  Q_PROPERTY(QAbstractItemModel* filteredProfiles READ filteredProfiles CONSTANT)
   Q_PROPERTY(LogListModel* logs READ logs CONSTANT)
+  Q_PROPERTY(QStringList groups READ groups NOTIFY groupsChanged)
+  Q_PROPERTY(QStringList checkedProfileIds READ checkedProfileIds NOTIFY checkedProfileIdsChanged)
+  Q_PROPERTY(bool showOnlyChecked READ showOnlyChecked NOTIFY showOnlyCheckedChanged)
 
   Q_PROPERTY(int selectedProfileIndex READ selectedProfileIndex WRITE setSelectedProfileIndex NOTIFY
                  selectedProfileIndexChanged)
@@ -71,7 +81,11 @@ public:
   ~AppController() override;
 
   ProfileListModel* profiles();
+  QAbstractItemModel* filteredProfiles();
   LogListModel* logs();
+  QStringList groups() const;
+  QStringList checkedProfileIds() const;
+  bool showOnlyChecked() const;
 
   int selectedProfileIndex() const;
   void setSelectedProfileIndex(int index);
@@ -137,12 +151,53 @@ public:
   Q_INVOKABLE void runSelectedProfile();
   Q_INVOKABLE void stopSelectedProfile();
   Q_INVOKABLE void testSelectedProxy();
+  Q_INVOKABLE void testCheckedProxies();
+  Q_INVOKABLE void cancelProxyTestBatch();
   Q_INVOKABLE void startSelectedVpn();
   Q_INVOKABLE void stopSelectedVpn();
+  Q_INVOKABLE void startCheckedVpns();
+  Q_INVOKABLE void stopCheckedVpns();
+  Q_INVOKABLE bool selectProfileById(const QString& profileId);
+  Q_INVOKABLE void runCheckedProfiles();
+  Q_INVOKABLE void stopCheckedProfiles();
+  Q_INVOKABLE void deleteCheckedProfiles();
+  Q_INVOKABLE void setGroupForCheckedProfiles(const QString& group);
+  Q_INVOKABLE int checkedCount() const;
+  Q_INVOKABLE bool isProfileChecked(const QString& profileId) const;
 
   Q_INVOKABLE void startAgent();
   Q_INVOKABLE void stopAgent();
   Q_INVOKABLE void clearLogs();
+
+  Q_INVOKABLE void setLogViewMode(const QString& mode);
+  Q_INVOKABLE void loadHistory(const QString& mode, const QString& keyword, const QString& from, const QString& to);
+  Q_INVOKABLE void loadHistory(const QString& mode,
+                               const QString& keyword,
+                               const QString& from,
+                               const QString& to,
+                               const QString& scope);
+  Q_INVOKABLE QString exportHistory(const QString& mode, const QString& keyword, const QString& from, const QString& to);
+  Q_INVOKABLE QString exportHistory(const QString& mode,
+                                    const QString& keyword,
+                                    const QString& from,
+                                    const QString& to,
+                                    const QString& scope);
+  Q_INVOKABLE bool selectProfileByIdPrefix(const QString& prefix);
+
+  Q_INVOKABLE void setGroupFilter(const QString& group);
+  Q_INVOKABLE void setSearchKeyword(const QString& keyword);
+  Q_INVOKABLE void applyFilters();
+  Q_INVOKABLE void resetFilters();
+
+  Q_INVOKABLE void setProfileChecked(const QString& profileId, bool checked);
+  Q_INVOKABLE void clearCheckedProfiles();
+  Q_INVOKABLE void checkAllVisibleProfiles();
+  Q_INVOKABLE void uncheckAllVisibleProfiles();
+  Q_INVOKABLE void invertCheckedVisibleProfiles();
+  Q_INVOKABLE void checkGroupProfiles(const QString& group);
+  Q_INVOKABLE void uncheckGroupProfiles(const QString& group);
+  Q_INVOKABLE void invertCheckedGroupProfiles(const QString& group);
+  Q_INVOKABLE void setShowOnlyChecked(bool enabled);
 
 signals:
   void selectedProfileIndexChanged();
@@ -151,11 +206,30 @@ signals:
   void selectedVpnStatusChanged();
   void agentRunningChanged();
   void ipcConnectedChanged();
+  void groupsChanged();
+  void checkedProfileIdsChanged();
+  void showOnlyCheckedChanged();
 
 private:
-  QString profilesFilePath() const;
+  QString legacyProfilesJsonPath() const;
   void loadProfiles();
-  void saveProfiles();
+  bool persistProfile(const ProfileListModel::ProfileItem& item);
+  bool deleteProfileFromStore(const QString& profileId);
+  void appendLogLine(const QString& message, const QString& source = QStringLiteral("app"), const QString& profileId = {});
+  void appendLogRaw(const QString& line, const QString& source = QStringLiteral("app"), const QString& profileId = {});
+  void persistRunEvent(const QString& profileId, const QString& event, const QString& status, const QString& detail);
+  void persistProxyTestRun(const QString& profileId,
+                           bool ok,
+                           const QString& observedIp,
+                           int statusCode,
+                           int durationMs,
+                           int qtError,
+                           const QString& errorText);
+  void rebuildGroups();
+  void emitCheckedProfileIds();
+  QString sendProxyTestRequest(const QString& profileId);
+  void pumpProxyTestQueue();
+  void finishProxyTestSlot(const QString& profileId, const QString& reason);
   QString newProfileName() const;
   QString agentProgramPath() const;
   bool hasSelectedProfile() const;
@@ -163,13 +237,31 @@ private:
   void updateSelectedProfileItem(const ProfileListModel::ProfileItem& item);
 
   ProfileListModel* m_profiles = nullptr;
+  ProfileFilterModel* m_filtered = nullptr;
   LogListModel* m_logs = nullptr;
+  QStringList m_groups;
+  QString m_groupFilter = QStringLiteral("所有分组");
+  QString m_searchKeyword;
+  QSet<QString> m_checkedSet;
+  QStringList m_checkedIds;
+  bool m_showOnlyChecked = false;
 
   int m_selectedProfileIndex = -1;
 
   QProcess* m_agent = nullptr;
   IpcClient* m_ipc = nullptr;
+  ProfileRepository* m_repo = nullptr;
   bool m_ipcConnected = false;
+  bool m_liveLogsEnabled = true;
+  QString m_logViewMode = QStringLiteral("实时日志");
   QString m_proxyLastTestSummary;
+  bool m_proxyBatchRunning = false;
+  QString m_proxyBatchId;
+  int m_proxyBatchMaxConcurrent = 3;
+  qint64 m_proxyBatchTimeoutMs = 16000;
+  QStringList m_proxyBatchQueue;
+  QHash<QString, qint64> m_proxyBatchInFlightStartMs;
+  QHash<QString, QString> m_proxyBatchInFlightRequestId;
+  QTimer* m_proxyBatchTimer = nullptr;
   QHash<QString, QString> m_vpnStatusByProfileId;
 };

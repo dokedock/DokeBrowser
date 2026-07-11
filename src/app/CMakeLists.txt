@@ -6,8 +6,12 @@ qt_add_executable(dokebrowser
   core/IpcClient.h
   core/LogListModel.cpp
   core/LogListModel.h
+  core/ProfileFilterModel.cpp
+  core/ProfileFilterModel.h
   core/ProfileListModel.cpp
   core/ProfileListModel.h
+  core/ProfileRepository.cpp
+  core/ProfileRepository.h
   qml/qml.qrc
   $<$<PLATFORM_ID:Windows>:win/app.rc>
 )
@@ -20,6 +24,7 @@ target_link_libraries(dokebrowser PRIVATE
   Qt6::Quick
   Qt6::Qml
   Qt6::QuickControls2
+  Qt6::Sql
 )
 
 set_target_properties(dokebrowser PROPERTIES

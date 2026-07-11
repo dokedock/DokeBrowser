@@ -16,6 +16,11 @@ public:
     qint64 createdAtMs = 0;
     qint64 lastOpenAtMs = 0;
 
+    QString proxyLastObservedIp;
+    bool proxyLastOk = false;
+    QString proxyLastError;
+    qint64 proxyLastAtMs = 0;
+
     QString dataDir;
     QString language;
     QString timezone;
@@ -47,6 +52,8 @@ public:
     StatusRole,
     CreatedAtMsRole,
     LastOpenAtMsRole,
+    ProxyLastIpRole,
+    ProxyLastOkRole,
   };
 
   explicit ProfileListModel(QObject* parent = nullptr);

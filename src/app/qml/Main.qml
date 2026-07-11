@@ -60,6 +60,7 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         text: "环境管理"
                         highlighted: true
+                        onClicked: AppController.resetFilters()
                     }
                     Button {
                         Layout.fillWidth: true
@@ -112,10 +113,56 @@ ApplicationWindow {
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 10
-                    ComboBox { Layout.preferredWidth: 160; model: ["所有分组"] }
-                    TextField { Layout.fillWidth: true; placeholderText: "输入 名称、备注、分组 等..." }
-                    Button { text: "搜索" }
-                    Button { text: "重置" }
+                    ComboBox {
+                        id: groupFilter
+                        Layout.preferredWidth: 160
+                        model: AppController.groups
+                        onActivated: {
+                            AppController.setGroupFilter(currentText)
+                            AppController.applyFilters()
+                        }
+                    }
+                    TextField { id: searchInput; Layout.fillWidth: true; placeholderText: "输入 名称、备注、分组 等..." }
+                    Button {
+                        text: "搜索"
+                        onClicked: {
+                            AppController.setSearchKeyword(searchInput.text)
+                            AppController.applyFilters()
+                        }
+                    }
+                    Button {
+                        text: "重置"
+                        onClicked: {
+                            searchInput.text = ""
+                            groupFilter.currentIndex = 0
+                            AppController.resetFilters()
+                        }
+                    }
+                    Button {
+                        id: batchBtn
+                        text: "批量操作"
+                        onClicked: {
+                            var p = batchBtn.mapToItem(root.contentItem, 0, batchBtn.height)
+                            batchMenu.popup(p.x, p.y)
+                        }
+                        Menu {
+                            id: batchMenu
+                            MenuItem { text: "全选（可见）"; onTriggered: AppController.checkAllVisibleProfiles() }
+                            MenuItem { text: "反选（可见）"; onTriggered: AppController.invertCheckedVisibleProfiles() }
+                            MenuItem { text: "清空（可见）"; onTriggered: AppController.uncheckAllVisibleProfiles() }
+                            MenuSeparator { }
+                            MenuItem { text: "勾选该组"; onTriggered: AppController.checkGroupProfiles(groupFilter.currentText) }
+                            MenuItem { text: "取消该组"; onTriggered: AppController.uncheckGroupProfiles(groupFilter.currentText) }
+                            MenuItem { text: "反选该组"; onTriggered: AppController.invertCheckedGroupProfiles(groupFilter.currentText) }
+                            MenuSeparator { }
+                            MenuItem {
+                                text: "仅看勾选"
+                                checkable: true
+                                checked: AppController.showOnlyChecked
+                                onTriggered: AppController.setShowOnlyChecked(!AppController.showOnlyChecked)
+                            }
+                        }
+                    }
                     Item { Layout.fillWidth: true }
                 }
 
@@ -161,7 +208,7 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
                                 clip: true
-                                model: AppController.profiles
+                                model: AppController.filteredProfiles
                                 delegate: Rectangle {
                                     required property int index
                                     required property string profileName
@@ -169,15 +216,17 @@ ApplicationWindow {
                                     required property string profileGroup
                                     required property string profileRemark
                                     required property string profileStatus
+                                    required property string profileProxyLastIp
+                                    required property bool profileProxyLastOk
                                     required property var profileLastOpenAtMs
                                     required property var profileCreatedAtMs
 
                                     width: ListView.view.width
                                     height: 42
                                     radius: theme.radius
-                                    color: index === AppController.selectedProfileIndex ? "#e6f4ff" : "#ffffff"
+                                    color: profileId === AppController.selectedProfileId ? "#e6f4ff" : "#ffffff"
                                     border.width: 1
-                                    border.color: index === AppController.selectedProfileIndex ? "#91caff" : theme.border
+                                    border.color: profileId === AppController.selectedProfileId ? "#91caff" : theme.border
 
                                     RowLayout {
                                         anchors.fill: parent
@@ -185,7 +234,11 @@ ApplicationWindow {
                                         anchors.rightMargin: 10
                                         spacing: 10
 
-                                        CheckBox { Layout.preferredWidth: 30 }
+                                        CheckBox {
+                                            Layout.preferredWidth: 30
+                                            checked: AppController.isProfileChecked(profileId)
+                                            onClicked: AppController.setProfileChecked(profileId, checked)
+                                        }
                                         Label { text: profileId.length > 8 ? profileId.slice(0, 8) : profileId; Layout.preferredWidth: 70; color: theme.text2 }
                                         RowLayout {
                                             Layout.preferredWidth: 60
@@ -195,20 +248,26 @@ ApplicationWindow {
                                         }
                                         Label { text: profileName; Layout.preferredWidth: 200; color: theme.text }
                                         Label { text: profileGroup; Layout.preferredWidth: 140; color: theme.text2; elide: Text.ElideRight }
-                                        Label { text: "-"; Layout.preferredWidth: 140; color: theme.text2 }
+                                        Label {
+                                            text: profileProxyLastIp.length > 0 ? profileProxyLastIp : "-"
+                                            Layout.preferredWidth: 140
+                                            color: profileProxyLastOk ? "#52c41a" : theme.text2
+                                            elide: Text.ElideRight
+                                        }
                                         Label { text: profileRemark; Layout.fillWidth: true; color: theme.text2; elide: Text.ElideRight }
                                         Label { text: root.fmtTs(profileLastOpenAtMs); Layout.preferredWidth: 150; color: theme.text2 }
                                         Label { text: root.fmtTs(profileCreatedAtMs); Layout.preferredWidth: 150; color: theme.text2 }
                                         Button {
                                             Layout.preferredWidth: 90
                                             text: "更多"
-                                            onClicked: AppController.selectedProfileIndex = index
+                                            onClicked: AppController.selectProfileById(profileId)
                                         }
                                     }
 
                                     MouseArea {
                                         anchors.fill: parent
-                                        onClicked: AppController.selectedProfileIndex = index
+                                        z: -1
+                                        onClicked: AppController.selectProfileById(profileId)
                                     }
                                 }
                             }
@@ -233,11 +292,74 @@ ApplicationWindow {
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: 8
-                                Button { text: "运行"; enabled: AppController.selectedProfileIndex >= 0; onClicked: AppController.runSelectedProfile() }
-                                Button { text: "停止"; enabled: AppController.selectedProfileIndex >= 0; onClicked: AppController.stopSelectedProfile() }
-                                Button { text: "删除"; enabled: AppController.selectedProfileIndex >= 0; onClicked: AppController.deleteSelectedProfile() }
+                                Button {
+                                    text: "运行"
+                                    enabled: AppController.selectedProfileIndex >= 0 || AppController.checkedProfileIds.length > 0
+                                    onClicked: AppController.runCheckedProfiles()
+                                }
+                                Button {
+                                    text: "停止"
+                                    enabled: AppController.selectedProfileIndex >= 0 || AppController.checkedProfileIds.length > 0
+                                    onClicked: AppController.stopCheckedProfiles()
+                                }
+                                Button {
+                                    text: "删除"
+                                    enabled: AppController.selectedProfileIndex >= 0 || AppController.checkedProfileIds.length > 0
+                                    onClicked: {
+                                        if (AppController.checkedProfileIds.length > 0) {
+                                            batchDeleteDialog.open()
+                                        } else {
+                                            AppController.deleteSelectedProfile()
+                                        }
+                                    }
+                                }
+                                Button {
+                                    text: "设分组"
+                                    visible: AppController.checkedProfileIds.length > 0 || AppController.selectedProfileIndex >= 0
+                                    enabled: AppController.checkedProfileIds.length > 0 || AppController.selectedProfileIndex >= 0
+                                    onClicked: groupDialog.open()
+                                }
+                                Button {
+                                    text: "清空勾选"
+                                    visible: AppController.checkedProfileIds.length > 0
+                                    onClicked: AppController.clearCheckedProfiles()
+                                }
+                                Label {
+                                    text: AppController.checkedProfileIds.length > 0 ? ("已选 " + AppController.checkedProfileIds.length) : ""
+                                    color: theme.text2
+                                }
                                 Item { Layout.fillWidth: true }
                                 Button { text: "清空日志"; onClicked: AppController.clearLogs() }
+                            }
+
+                            Dialog {
+                                id: batchDeleteDialog
+                                modal: true
+                                title: "批量删除"
+                                standardButtons: Dialog.Ok | Dialog.Cancel
+                                contentItem: Label {
+                                    padding: 12
+                                    text: "确认删除已勾选的 " + AppController.checkedProfileIds.length + " 个 Profile？"
+                                    color: theme.text
+                                }
+                                onAccepted: AppController.deleteCheckedProfiles()
+                            }
+
+                            Dialog {
+                                id: groupDialog
+                                modal: true
+                                title: "设置分组"
+                                standardButtons: Dialog.Ok | Dialog.Cancel
+                                contentItem: ColumnLayout {
+                                    spacing: 10
+                                    padding: 12
+                                    Label { text: "分组名"; color: theme.text2 }
+                                    TextField { id: groupInput; Layout.preferredWidth: 320; placeholderText: "例如：A组"; text: "" }
+                                }
+                                onAccepted: {
+                                    AppController.setGroupForCheckedProfiles(groupInput.text)
+                                    groupInput.text = ""
+                                }
                             }
 
                             TabBar {
@@ -404,8 +526,8 @@ ApplicationWindow {
                                         spacing: 8
                                         Button {
                                             text: "测试代理"
-                                            enabled: AppController.selectedProfileIndex >= 0 && AppController.ipcConnected
-                                            onClicked: AppController.testSelectedProxy()
+                                            enabled: AppController.ipcConnected && (AppController.selectedProfileIndex >= 0 || AppController.checkedProfileIds.length > 0)
+                                            onClicked: AppController.testCheckedProxies()
                                         }
                                         Label { text: AppController.proxyLastTestSummary; color: theme.text2; Layout.fillWidth: true; elide: Text.ElideRight }
                                     }
@@ -421,13 +543,13 @@ ApplicationWindow {
                                         Item { Layout.fillWidth: true }
                                         Button {
                                             text: "启动 OpenVPN"
-                                            enabled: AppController.selectedProfileIndex >= 0 && AppController.ipcConnected
-                                            onClicked: AppController.startSelectedVpn()
+                                            enabled: AppController.ipcConnected && (AppController.selectedProfileIndex >= 0 || AppController.checkedProfileIds.length > 0)
+                                            onClicked: AppController.startCheckedVpns()
                                         }
                                         Button {
                                             text: "停止 OpenVPN"
-                                            enabled: AppController.selectedProfileIndex >= 0 && AppController.ipcConnected
-                                            onClicked: AppController.stopSelectedVpn()
+                                            enabled: AppController.ipcConnected && (AppController.selectedProfileIndex >= 0 || AppController.checkedProfileIds.length > 0)
+                                            onClicked: AppController.stopCheckedVpns()
                                         }
                                     }
 
@@ -511,17 +633,100 @@ ApplicationWindow {
                                     Layout.fillWidth: true
                                     Layout.fillHeight: true
                                     spacing: 6
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 8
+
+                                        ComboBox {
+                                            id: logMode
+                                            Layout.preferredWidth: 140
+                                            model: ["实时日志", "历史日志", "运行记录", "代理自检"]
+                                            onActivated: AppController.setLogViewMode(currentText)
+                                        }
+
+                                        ComboBox {
+                                            id: logScope
+                                            Layout.preferredWidth: 110
+                                            visible: logMode.currentText === "历史日志"
+                                            model: ["当前Profile", "全局"]
+                                        }
+
+                                        TextField {
+                                            id: historyKeyword
+                                            Layout.fillWidth: true
+                                            placeholderText: "关键字（可选）"
+                                        }
+
+                                        TextField {
+                                            id: historyFrom
+                                            Layout.preferredWidth: 130
+                                            placeholderText: "开始 YYYY-MM-DD"
+                                        }
+
+                                        TextField {
+                                            id: historyTo
+                                            Layout.preferredWidth: 130
+                                            placeholderText: "结束 YYYY-MM-DD"
+                                        }
+
+                                        Button {
+                                            text: "加载"
+                                            enabled: logMode.currentText !== "实时日志"
+                                            onClicked: AppController.loadHistory(logMode.currentText, historyKeyword.text, historyFrom.text, historyTo.text, logScope.currentText)
+                                        }
+
+                                        Button {
+                                            text: "导出"
+                                            enabled: logMode.currentText !== "实时日志"
+                                            onClicked: AppController.exportHistory(logMode.currentText, historyKeyword.text, historyFrom.text, historyTo.text, logScope.currentText)
+                                        }
+                                    }
+
                                     ListView {
                                         Layout.fillWidth: true
                                         Layout.fillHeight: true
                                         clip: true
                                         model: AppController.logs
-                                        delegate: Label {
+                                        delegate: Item {
                                             width: ListView.view.width
-                                            text: model.text
-                                            color: theme.text2
-                                            font.pixelSize: 12
-                                            elide: Text.ElideRight
+                                            height: logText.implicitHeight + 4
+
+                                            Label {
+                                                id: logText
+                                                anchors.left: parent.left
+                                                anchors.right: parent.right
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                text: model.text
+                                                color: theme.text2
+                                                font.pixelSize: 12
+                                                elide: Text.ElideRight
+                                            }
+
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                enabled: logMode.currentText === "历史日志" && logScope.currentText === "全局"
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: {
+                                                    var t = model.text
+                                                    if (!t || t.length < 10)
+                                                        return
+                                                    if (t[0] !== "[")
+                                                        return
+                                                    var r = /^\[([0-9a-fA-F]{8}|global)\]\s+/.exec(t)
+                                                    if (!r)
+                                                        return
+                                                    var p = r[1]
+                                                    if (p === "global") {
+                                                        logMode.currentIndex = 0
+                                                        AppController.setLogViewMode("实时日志")
+                                                        return
+                                                    }
+                                                    if (AppController.selectProfileByIdPrefix(p)) {
+                                                        logScope.currentIndex = 0
+                                                        AppController.loadHistory("历史日志", historyKeyword.text, historyFrom.text, historyTo.text, "当前Profile")
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }

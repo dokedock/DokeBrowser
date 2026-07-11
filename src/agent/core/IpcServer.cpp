@@ -18,6 +18,8 @@
 #include <QTemporaryFile>
 #include <QTimer>
 #include <QUrl>
+#include <functional>
+#include <memory>
 
 IpcServer::IpcServer(QObject* parent) : QObject(parent) {
   m_server = new QLocalServer(this);
@@ -115,6 +117,7 @@ void IpcServer::onPeerJson(const QJsonObject& obj) {
   }
 
   if (type == QStringLiteral("proxy.test")) {
+    const QString profileId = obj.value(QStringLiteral("profile_id")).toString();
     const QJsonObject proxy = obj.value(QStringLiteral("proxy")).toObject();
     const bool enabled = proxy.value(QStringLiteral("enabled")).toBool(false);
     const QString proxyType = proxy.value(QStringLiteral("type")).toString(QStringLiteral("direct")).toLower();
@@ -122,10 +125,19 @@ void IpcServer::onPeerJson(const QJsonObject& obj) {
     const int port = proxy.value(QStringLiteral("port")).toInt(0);
     const QString username = proxy.value(QStringLiteral("username")).toString();
     const QString password = proxy.value(QStringLiteral("password")).toString();
-    const QString urlStr = obj.value(QStringLiteral("url")).toString(QStringLiteral("https://api.ipify.org?format=json"));
+    const QString urlStr = obj.value(QStringLiteral("url")).toString(QStringLiteral("https://httpbin.org/ip"));
+    const QString requestId = obj.value(QStringLiteral("request_id")).toString();
+    const QString batchId = obj.value(QStringLiteral("batch_id")).toString();
 
     QJsonObject result;
     result.insert(QStringLiteral("type"), QStringLiteral("proxy.test.result"));
+    result.insert(QStringLiteral("profile_id"), profileId);
+    if (!requestId.isEmpty()) {
+      result.insert(QStringLiteral("request_id"), requestId);
+    }
+    if (!batchId.isEmpty()) {
+      result.insert(QStringLiteral("batch_id"), batchId);
+    }
 
     if (enabled && proxyType != QStringLiteral("direct") && (host.isEmpty() || port <= 0)) {
       result.insert(QStringLiteral("ok"), false);
@@ -135,8 +147,8 @@ void IpcServer::onPeerJson(const QJsonObject& obj) {
     }
 
     QPointer<FramedJsonSocket> peerPtr(m_peer);
-    QElapsedTimer timer;
-    timer.start();
+    auto timerPtr = std::make_shared<QElapsedTimer>();
+    timerPtr->start();
 
     auto* nam = new QNetworkAccessManager(this);
     if (!enabled || proxyType == QStringLiteral("direct")) {
@@ -155,47 +167,150 @@ void IpcServer::onPeerJson(const QJsonObject& obj) {
       nam->setProxy(px);
     }
 
-    QNetworkRequest req{QUrl(urlStr)};
-    QNetworkReply* reply = nam->get(req);
+    QStringList urls;
+    if (!urlStr.trimmed().isEmpty()) {
+      urls.push_back(urlStr.trimmed());
+    }
+    urls.push_back(QStringLiteral("https://httpbin.org/ip"));
+    urls.push_back(QStringLiteral("https://api.ipify.org?format=json"));
+    urls.removeDuplicates();
 
-    QObject::connect(reply, &QNetworkReply::finished, this, [peerPtr, reply, nam, timer]() mutable {
-      const int durationMs = static_cast<int>(timer.elapsed());
+    auto sent = std::make_shared<bool>(false);
+    auto attempt = std::make_shared<int>(0);
+    auto lastStatusCode = std::make_shared<int>(0);
+    auto lastQtError = std::make_shared<int>(0);
+    auto lastError = std::make_shared<QString>();
+    auto lastObservedIp = std::make_shared<QString>();
 
+    auto doAttempt = std::make_shared<std::function<void()>>();
+    *doAttempt = [this, peerPtr, nam, urls, timerPtr, sent, attempt, profileId, requestId, batchId, doAttempt, lastStatusCode,
+                  lastQtError, lastError, lastObservedIp]() mutable {
+      if (*sent) {
+        nam->deleteLater();
+        return;
+      }
       if (!peerPtr) {
-        reply->deleteLater();
+        nam->deleteLater();
+        return;
+      }
+      if (*attempt >= urls.size()) {
+        const int durationMs = static_cast<int>(timerPtr->elapsed());
+        QJsonObject r;
+        r.insert(QStringLiteral("type"), QStringLiteral("proxy.test.result"));
+        r.insert(QStringLiteral("profile_id"), profileId);
+        if (!requestId.isEmpty()) {
+          r.insert(QStringLiteral("request_id"), requestId);
+        }
+        if (!batchId.isEmpty()) {
+          r.insert(QStringLiteral("batch_id"), batchId);
+        }
+        r.insert(QStringLiteral("ok"), false);
+        r.insert(QStringLiteral("status_code"), *lastStatusCode);
+        r.insert(QStringLiteral("duration_ms"), durationMs);
+        r.insert(QStringLiteral("qt_error"), *lastQtError);
+        r.insert(QStringLiteral("error"), lastError->isEmpty() ? QStringLiteral("all_attempts_failed") : *lastError);
+        r.insert(QStringLiteral("observed_ip"), *lastObservedIp);
+        peerPtr->send(r);
+        *sent = true;
         nam->deleteLater();
         return;
       }
 
-      const QVariant sc = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
-      const int statusCode = sc.isValid() ? sc.toInt() : 0;
-      const int qtError = static_cast<int>(reply->error());
-      const QString errStr = reply->errorString();
-      const QByteArray body = reply->readAll();
+      const QString url = urls.at(*attempt);
+      (*attempt)++;
 
-      QString observedIp;
-      QJsonParseError parseErr{};
-      const QJsonDocument doc = QJsonDocument::fromJson(body, &parseErr);
-      if (parseErr.error == QJsonParseError::NoError && doc.isObject()) {
-        observedIp = doc.object().value(QStringLiteral("ip")).toString();
-      }
+      QNetworkRequest req{QUrl(url)};
+      req.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("DokeBrowser/0.1"));
+      req.setRawHeader("Accept", "application/json");
+      req.setTransferTimeout(4000);
+      QNetworkReply* reply = nam->get(req);
 
-      const bool ok = (reply->error() == QNetworkReply::NoError) && (statusCode >= 200 && statusCode < 300);
+      auto* timeout = new QTimer(nam);
+      timeout->setSingleShot(true);
+      timeout->start(4500);
 
-      QJsonObject result;
-      result.insert(QStringLiteral("type"), QStringLiteral("proxy.test.result"));
-      result.insert(QStringLiteral("ok"), ok);
-      result.insert(QStringLiteral("status_code"), statusCode);
-      result.insert(QStringLiteral("duration_ms"), durationMs);
-      result.insert(QStringLiteral("qt_error"), qtError);
-      result.insert(QStringLiteral("error"), ok ? QString() : errStr);
-      result.insert(QStringLiteral("observed_ip"), observedIp);
+      QObject::connect(timeout, &QTimer::timeout, this, [reply, timeout, doAttempt, sent]() mutable {
+        if (*sent) {
+          timeout->deleteLater();
+          reply->deleteLater();
+          return;
+        }
+        reply->abort();
+        timeout->deleteLater();
+        reply->deleteLater();
+        (*doAttempt)();
+      });
 
-      peerPtr->send(result);
+      QObject::connect(reply, &QNetworkReply::finished, this,
+                       [peerPtr, reply, timeout, timerPtr, sent, profileId, requestId, batchId, doAttempt, lastStatusCode,
+                        lastQtError, lastError, lastObservedIp, url]() mutable {
+                         timeout->stop();
+                         timeout->deleteLater();
 
-      reply->deleteLater();
-      nam->deleteLater();
-    });
+                         if (*sent) {
+                           reply->deleteLater();
+                           return;
+                         }
+                         if (!peerPtr) {
+                           reply->deleteLater();
+                           return;
+                         }
+
+                         const int durationMs = static_cast<int>(timerPtr->elapsed());
+                         const QVariant sc = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
+                         const int statusCode = sc.isValid() ? sc.toInt() : 0;
+                         const int qtError = static_cast<int>(reply->error());
+                         const QString errStr = reply->errorString();
+                         const QByteArray body = reply->readAll();
+
+                         QString observedIp;
+                         QJsonParseError parseErr{};
+                         const QJsonDocument doc = QJsonDocument::fromJson(body, &parseErr);
+                         if (parseErr.error == QJsonParseError::NoError && doc.isObject()) {
+                           observedIp = doc.object().value(QStringLiteral("ip")).toString();
+                           if (observedIp.isEmpty()) {
+                             observedIp = doc.object().value(QStringLiteral("origin")).toString();
+                           }
+                           if (observedIp.contains(',')) {
+                             observedIp = observedIp.split(',').value(0).trimmed();
+                           }
+                         }
+
+                         *lastStatusCode = statusCode;
+                         *lastQtError = qtError;
+                         *lastError = errStr;
+                         *lastObservedIp = observedIp;
+
+                         const bool ok = (reply->error() == QNetworkReply::NoError) && (statusCode >= 200 && statusCode < 300) &&
+                                         !observedIp.isEmpty();
+                         if (!ok) {
+                           reply->deleteLater();
+                           (*doAttempt)();
+                           return;
+                         }
+
+                         QJsonObject r;
+                         r.insert(QStringLiteral("type"), QStringLiteral("proxy.test.result"));
+                         r.insert(QStringLiteral("profile_id"), profileId);
+                         if (!requestId.isEmpty()) {
+                           r.insert(QStringLiteral("request_id"), requestId);
+                         }
+                         if (!batchId.isEmpty()) {
+                           r.insert(QStringLiteral("batch_id"), batchId);
+                         }
+                         r.insert(QStringLiteral("ok"), true);
+                         r.insert(QStringLiteral("status_code"), statusCode);
+                         r.insert(QStringLiteral("duration_ms"), durationMs);
+                         r.insert(QStringLiteral("qt_error"), qtError);
+                         r.insert(QStringLiteral("error"), QString());
+                         r.insert(QStringLiteral("observed_ip"), observedIp);
+                         peerPtr->send(r);
+                         *sent = true;
+                         reply->deleteLater();
+                       });
+    };
+
+    (*doAttempt)();
 
     return;
   }

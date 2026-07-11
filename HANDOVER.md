@@ -31,9 +31,18 @@ cmake --build build -j 8
 ```
 
 ## 数据存储
-- 当前使用 JSON 文件落盘（便于快速迭代，后续可迁移 SQLite）
-- 路径：`QStandardPaths::AppDataLocation/profiles.json`
-- Schema（概要）：Profile 的基础信息 / 代理配置 / OpenVPN 配置都会写入该文件
+- 当前使用 SQLite 落盘（QtSql），由 `ProfileRepository` 统一读写
+- 路径：`QStandardPaths::AppDataLocation/profiles.sqlite`
+- 表结构（概要）
+  - `profiles`：Profile 基础信息（name/group/remark/status/created_at/last_open_at 等）
+  - `proxy_configs`：代理配置（enabled/type/host/port/username/password）
+  - `vpn_openvpn_configs`：OpenVPN 配置（exe/config/socks 等）
+  - `profile_runs`：运行事件（start/stop/vpn.status 等）
+  - `logs`：日志归档
+  - `proxy_test_runs`：代理自检历史
+- 自动清理（按 Profile 分桶裁剪）
+  - `logs` 保留 500 条
+  - `profile_runs` / `proxy_test_runs` 各保留 100 条
 
 ## UI 现状（对齐思路）
 主界面为“环境管理”视图，分为四块：
@@ -49,8 +58,9 @@ cmake --build build -j 8
 
 ### 代理 Tab
 - 每 Profile 的代理配置字段：启用、类型（direct/http/https/socks5）、host、port、用户名、密码
-- “测试代理”：通过 IPC 下发到 Agent，Agent 使用 QtNetwork 请求 `https://api.ipify.org?format=json`
+- “测试代理”：通过 IPC 下发到 Agent，Agent 使用 QtNetwork 请求 `https://httpbin.org/ip`（失败会自动 fallback 尝试 `https://api.ipify.org?format=json`）
   - 回传 `proxy.test.result`，并在 UI 显示摘要（OK/FAIL、status、耗时、ip、错误）
+  - 批量测试：Host 侧带并发/队列控制（默认并发=3），并支持取消；为防止取消/超时后“晚到结果”覆盖，批量链路带 `batch_id`/`request_id` 去串包
 
 ### VPN Tab（OpenVPN 走 SOCKS）
 - 每 Profile 的 OpenVPN 配置字段：启用、openvpn 可执行、config 路径、是否走 SOCKS、SOCKS host/port/用户名/密码
@@ -73,9 +83,9 @@ cmake --build build -j 8
 - `profile.start/profile.stop`（App → Agent）
   - `{ "type": "profile.start", "profile_id": "...", "profile_name": "..." }`
 - `proxy.test`（App → Agent）
-  - `{ "type": "proxy.test", "profile_id": "...", "proxy": { ... }, "url": "https://api.ipify.org?format=json" }`
+  - `{ "type": "proxy.test", "profile_id": "...", "proxy": { ... }, "url": "https://httpbin.org/ip", "request_id": "...", "batch_id": "..." }`
 - `proxy.test.result`（Agent → App）
-  - `{ "type": "proxy.test.result", "ok": true, "observed_ip": "...", "status_code": 200, "duration_ms": 123, "qt_error": 0, "error": "" }`
+  - `{ "type": "proxy.test.result", "profile_id":"...", "ok": true, "observed_ip": "...", "status_code": 200, "duration_ms": 123, "qt_error": 0, "error": "", "request_id":"...", "batch_id":"..." }`
 - `vpn.openvpn.start/vpn.openvpn.stop`（App → Agent）
   - `{ "type": "vpn.openvpn.start", "profile_id": "...", "exe": "openvpn", "config": "/path/to.ovpn", "socks": { ... } }`
 - `vpn.status`（Agent → App）
@@ -94,15 +104,14 @@ cmake --build build -j 8
 
 ## 当前进度（已完成）
 - UI：环境管理主界面骨架已按目标风格对齐
-- Profile：新建/删除/选择，字段编辑落盘，列表列已扩展
+- Profile：新建/删除/选择，字段编辑落库，列表列已扩展；支持分组/关键字过滤与“仅看勾选”
 - IPC：app↔agent 本地 socket JSON 帧协议，支持重连
-- 代理：配置 + “测试代理”链路跑通（Agent QtNetwork 实测）
+- 代理：配置 + 单测/批量“测试代理”链路跑通（并发/队列/超时/取消 + 防串包）
 - VPN：OpenVPN（可选 SOCKS）启动/停止 + 日志/状态回传链路跑通
-- 自动化：新增 Smoke Test，可用于回归关键链路
+- 自动化：新增 Smoke Test，可用于回归关键链路（弱依赖外网可用性）
 
 ## 下一步建议
+- 代理池：实现 `proxies`/`proxy_assignments` 等表与“导入/分配/释放/换一个”闭环，支撑 Profile 级别独立出口
 - CEF 集成：在 Agent 内承载 CEF，Profile.start 真正创建浏览器实例
 - “仅浏览器走 VPN”：引入 tun2socks，将 VPN 出口转为本地代理端口，并仅给目标 Profile 的 CEF 网络栈设置代理
-- 搜索与分组管理：分组 CRUD、列表过滤、搜索字段（名称/备注/分组）
-- 数据持久化升级：从 JSON 迁移到 SQLite（多表结构：profiles/proxy/vpn/runs/logs）
-
+- OpenVPN 健壮性：进程崩溃检测、重启策略、状态归档与日志落库
