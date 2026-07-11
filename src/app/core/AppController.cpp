@@ -132,6 +132,64 @@ AppController::AppController(QObject* parent) : QObject(parent) {
     }
   });
 
+  QObject::connect(m_ipc, &IpcClient::proxyPoolTestResultReceived, this, [this](const QJsonObject& obj) {
+    const QString proxyId = obj.value(QStringLiteral("proxy_id")).toString();
+    const QString batchId = obj.value(QStringLiteral("batch_id")).toString();
+    const QString requestId = obj.value(QStringLiteral("request_id")).toString();
+    const bool isBatch = !batchId.isEmpty();
+    if (isBatch) {
+      if (batchId != m_proxyPoolBatchId) {
+        return;
+      }
+      if (!m_proxyPoolBatchInFlightStartMs.contains(proxyId)) {
+        return;
+      }
+      const QString expected = m_proxyPoolBatchInFlightRequestId.value(proxyId);
+      if (!expected.isEmpty() && !requestId.isEmpty() && requestId != expected) {
+        return;
+      }
+    }
+
+    const bool ok = obj.value(QStringLiteral("ok")).toBool(false);
+    const QString observedIp = obj.value(QStringLiteral("observed_ip")).toString();
+    const QString error = obj.value(QStringLiteral("error")).toString();
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+
+    if (m_repo && !proxyId.isEmpty()) {
+      QString err;
+      if (!m_repo->updateProxyHealth(proxyId, ok, observedIp, error, now, &err)) {
+        appendLogLine(QStringLiteral("proxy_pool_update_error: %1").arg(err), QStringLiteral("db"));
+      }
+    }
+
+    if (m_proxyPool) {
+      for (int i = 0; i < m_proxyPool->items().size(); i++) {
+        const auto& it = m_proxyPool->items().at(i);
+        if (it.id != proxyId) {
+          continue;
+        }
+        auto updated = it;
+        updated.lastOk = ok;
+        updated.lastIp = observedIp;
+        updated.lastError = ok ? QString() : error;
+        updated.lastAtMs = now;
+        m_proxyPool->updateAt(i, updated);
+        break;
+      }
+    }
+
+    appendLogLine(QStringLiteral("proxy_pool_test ok=%1 ip=%2 error=%3")
+                      .arg(ok ? "true" : "false")
+                      .arg(observedIp)
+                      .arg(error),
+                  QStringLiteral("proxy"));
+
+    if (isBatch) {
+      finishProxyPoolTestSlot(proxyId, QStringLiteral("result"));
+      pumpProxyPoolTestQueue();
+    }
+  });
+
   QObject::connect(m_ipc, &IpcClient::vpnStatusReceived, this, [this](const QJsonObject& obj) {
     const QString profileId = obj.value(QStringLiteral("profile_id")).toString();
     const QString status = obj.value(QStringLiteral("status")).toString();
@@ -1195,6 +1253,67 @@ void AppController::rotateProxyForSelectedProfile() {
   refreshProxyPool();
 }
 
+void AppController::testProxyPoolAll() {
+  if (!m_ipcConnected) {
+    appendLogLine(QStringLiteral("ipc_not_connected"), QStringLiteral("ipc"));
+    return;
+  }
+  if (!m_proxyPool) {
+    return;
+  }
+
+  QSet<QString> set;
+  QStringList queue;
+  for (const auto& it : m_proxyPool->items()) {
+    const QString id = it.id.trimmed();
+    if (id.isEmpty() || it.disabled || set.contains(id)) {
+      continue;
+    }
+    set.insert(id);
+    queue.push_back(id);
+  }
+  if (queue.isEmpty()) {
+    return;
+  }
+
+  if (!m_proxyPoolBatchTimer) {
+    m_proxyPoolBatchTimer = new QTimer(this);
+    m_proxyPoolBatchTimer->setInterval(200);
+    QObject::connect(m_proxyPoolBatchTimer, &QTimer::timeout, this, [this]() { pumpProxyPoolTestQueue(); });
+  }
+
+  m_proxyPoolBatchId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+  m_proxyPoolBatchQueue = queue;
+  m_proxyPoolBatchInFlightStartMs.clear();
+  m_proxyPoolBatchInFlightRequestId.clear();
+  m_proxyPoolBatchRunning = true;
+  appendLogLine(QStringLiteral("proxy_pool_test_batch start n=%1 max_concurrent=%2 timeout_ms=%3")
+                    .arg(m_proxyPoolBatchQueue.size())
+                    .arg(m_proxyPoolBatchMaxConcurrent)
+                    .arg(m_proxyPoolBatchTimeoutMs),
+                QStringLiteral("proxy"));
+
+  if (!m_proxyPoolBatchTimer->isActive()) {
+    m_proxyPoolBatchTimer->start();
+  }
+  pumpProxyPoolTestQueue();
+}
+
+void AppController::cancelProxyPoolTestBatch() {
+  if (!m_proxyPoolBatchRunning) {
+    return;
+  }
+  m_proxyPoolBatchRunning = false;
+  m_proxyPoolBatchId.clear();
+  m_proxyPoolBatchQueue.clear();
+  m_proxyPoolBatchInFlightStartMs.clear();
+  m_proxyPoolBatchInFlightRequestId.clear();
+  if (m_proxyPoolBatchTimer) {
+    m_proxyPoolBatchTimer->stop();
+  }
+  appendLogLine(QStringLiteral("proxy_pool_test_batch cancelled"), QStringLiteral("proxy"));
+}
+
 void AppController::setProfileChecked(const QString& profileId, bool checked) {
   const QString pid = profileId.trimmed();
   if (pid.isEmpty()) {
@@ -2163,6 +2282,139 @@ void AppController::finishProxyTestSlot(const QString& profileId, const QString&
   }
   m_proxyBatchInFlightStartMs.remove(profileId);
   m_proxyBatchInFlightRequestId.remove(profileId);
+}
+
+QString AppController::sendProxyPoolTestRequest(const QString& proxyId) {
+  if (!m_ipcConnected) {
+    return {};
+  }
+  if (!m_proxyPool) {
+    return {};
+  }
+
+  const QString id = proxyId.trimmed();
+  if (id.isEmpty()) {
+    return {};
+  }
+
+  for (const auto& it : m_proxyPool->items()) {
+    if (it.id != id) {
+      continue;
+    }
+    if (it.disabled) {
+      return {};
+    }
+
+    const QString requestId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+
+    QJsonObject proxy;
+    proxy.insert(QStringLiteral("enabled"), true);
+    proxy.insert(QStringLiteral("type"), it.type);
+    proxy.insert(QStringLiteral("host"), it.host);
+    proxy.insert(QStringLiteral("port"), it.port);
+    proxy.insert(QStringLiteral("username"), it.username);
+    proxy.insert(QStringLiteral("password"), it.password);
+
+    QJsonObject msg;
+    msg.insert(QStringLiteral("type"), QStringLiteral("proxy_pool.test"));
+    msg.insert(QStringLiteral("proxy_id"), it.id);
+    msg.insert(QStringLiteral("proxy"), proxy);
+    msg.insert(QStringLiteral("url"), QStringLiteral("https://httpbin.org/ip"));
+    msg.insert(QStringLiteral("request_id"), requestId);
+    if (!m_proxyPoolBatchId.isEmpty()) {
+      msg.insert(QStringLiteral("batch_id"), m_proxyPoolBatchId);
+    }
+    m_ipc->send(msg);
+    return requestId;
+  }
+  return {};
+}
+
+void AppController::pumpProxyPoolTestQueue() {
+  if (!m_proxyPoolBatchRunning) {
+    return;
+  }
+
+  if (!m_ipcConnected) {
+    m_proxyPoolBatchRunning = false;
+    m_proxyPoolBatchId.clear();
+    m_proxyPoolBatchQueue.clear();
+    m_proxyPoolBatchInFlightStartMs.clear();
+    m_proxyPoolBatchInFlightRequestId.clear();
+    if (m_proxyPoolBatchTimer) {
+      m_proxyPoolBatchTimer->stop();
+    }
+    appendLogLine(QStringLiteral("proxy_pool_test_batch aborted ipc_not_connected"), QStringLiteral("proxy"));
+    return;
+  }
+
+  const qint64 now = QDateTime::currentMSecsSinceEpoch();
+  const qint64 timeoutMs = qMax<qint64>(1000, m_proxyPoolBatchTimeoutMs);
+
+  QStringList timedOut;
+  timedOut.reserve(m_proxyPoolBatchInFlightStartMs.size());
+  for (auto it = m_proxyPoolBatchInFlightStartMs.constBegin(); it != m_proxyPoolBatchInFlightStartMs.constEnd(); ++it) {
+    if (now - it.value() > timeoutMs) {
+      timedOut.push_back(it.key());
+    }
+  }
+  for (const auto& id : timedOut) {
+    finishProxyPoolTestSlot(id, QStringLiteral("timeout"));
+
+    if (m_repo) {
+      QString err;
+      m_repo->updateProxyHealth(id, false, QString(), QStringLiteral("timeout"), now, &err);
+    }
+
+    if (m_proxyPool) {
+      for (int i = 0; i < m_proxyPool->items().size(); i++) {
+        const auto& it = m_proxyPool->items().at(i);
+        if (it.id != id) {
+          continue;
+        }
+        auto updated = it;
+        updated.lastOk = false;
+        updated.lastIp.clear();
+        updated.lastError = QStringLiteral("timeout");
+        updated.lastAtMs = now;
+        m_proxyPool->updateAt(i, updated);
+        break;
+      }
+    }
+    appendLogLine(QStringLiteral("proxy_pool_test TIMEOUT id=%1").arg(id), QStringLiteral("proxy"));
+  }
+
+  const int maxConc = qMax(1, m_proxyPoolBatchMaxConcurrent);
+  while (m_proxyPoolBatchInFlightStartMs.size() < maxConc && !m_proxyPoolBatchQueue.isEmpty()) {
+    const QString id = m_proxyPoolBatchQueue.takeFirst().trimmed();
+    if (id.isEmpty() || m_proxyPoolBatchInFlightStartMs.contains(id)) {
+      continue;
+    }
+    const QString requestId = sendProxyPoolTestRequest(id);
+    if (requestId.isEmpty()) {
+      continue;
+    }
+    m_proxyPoolBatchInFlightStartMs.insert(id, now);
+    m_proxyPoolBatchInFlightRequestId.insert(id, requestId);
+  }
+
+  if (m_proxyPoolBatchQueue.isEmpty() && m_proxyPoolBatchInFlightStartMs.isEmpty()) {
+    m_proxyPoolBatchRunning = false;
+    m_proxyPoolBatchId.clear();
+    if (m_proxyPoolBatchTimer) {
+      m_proxyPoolBatchTimer->stop();
+    }
+    appendLogLine(QStringLiteral("proxy_pool_test_batch done"), QStringLiteral("proxy"));
+  }
+}
+
+void AppController::finishProxyPoolTestSlot(const QString& proxyId, const QString& reason) {
+  Q_UNUSED(reason);
+  if (proxyId.isEmpty()) {
+    return;
+  }
+  m_proxyPoolBatchInFlightStartMs.remove(proxyId);
+  m_proxyPoolBatchInFlightRequestId.remove(proxyId);
 }
 
 QString AppController::newProfileName() const {

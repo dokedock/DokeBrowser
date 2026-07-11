@@ -95,6 +95,12 @@ public:
   bool assignNextAvailableProxyToProfile(const QString& profileId, QString* error = nullptr);
   bool releaseProxyFromProfile(const QString& profileId, QString* error = nullptr);
   bool rotateProxyForProfile(const QString& profileId, QString* error = nullptr);
+  bool updateProxyHealth(const QString& proxyId,
+                         bool ok,
+                         const QString& observedIp,
+                         const QString& errorText,
+                         qint64 tsMs,
+                         QString* error = nullptr);
 
 private:
   bool enforceRetention(const QString& profileId, QString* error = nullptr);

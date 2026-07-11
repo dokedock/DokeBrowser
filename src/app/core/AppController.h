@@ -207,6 +207,8 @@ public:
   Q_INVOKABLE void assignProxyPoolToCheckedProfiles();
   Q_INVOKABLE void releaseProxyPoolFromCheckedProfiles();
   Q_INVOKABLE void rotateProxyForSelectedProfile();
+  Q_INVOKABLE void testProxyPoolAll();
+  Q_INVOKABLE void cancelProxyPoolTestBatch();
 
 signals:
   void selectedProfileIndexChanged();
@@ -239,6 +241,9 @@ private:
   QString sendProxyTestRequest(const QString& profileId);
   void pumpProxyTestQueue();
   void finishProxyTestSlot(const QString& profileId, const QString& reason);
+  QString sendProxyPoolTestRequest(const QString& proxyId);
+  void pumpProxyPoolTestQueue();
+  void finishProxyPoolTestSlot(const QString& proxyId, const QString& reason);
   QString newProfileName() const;
   QString agentProgramPath() const;
   bool hasSelectedProfile() const;
@@ -273,5 +278,13 @@ private:
   QHash<QString, qint64> m_proxyBatchInFlightStartMs;
   QHash<QString, QString> m_proxyBatchInFlightRequestId;
   QTimer* m_proxyBatchTimer = nullptr;
+  bool m_proxyPoolBatchRunning = false;
+  QString m_proxyPoolBatchId;
+  int m_proxyPoolBatchMaxConcurrent = 3;
+  qint64 m_proxyPoolBatchTimeoutMs = 16000;
+  QStringList m_proxyPoolBatchQueue;
+  QHash<QString, qint64> m_proxyPoolBatchInFlightStartMs;
+  QHash<QString, QString> m_proxyPoolBatchInFlightRequestId;
+  QTimer* m_proxyPoolBatchTimer = nullptr;
   QHash<QString, QString> m_vpnStatusByProfileId;
 };

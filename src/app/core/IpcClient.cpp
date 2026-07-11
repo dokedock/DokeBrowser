@@ -95,6 +95,10 @@ void IpcClient::onJsonReceived(const QJsonObject& obj) {
     emit proxyTestResultReceived(obj);
     return;
   }
+  if (type == QStringLiteral("proxy_pool.test.result")) {
+    emit proxyPoolTestResultReceived(obj);
+    return;
+  }
   if (type == QStringLiteral("vpn.status")) {
     emit vpnStatusReceived(obj);
   }

@@ -133,6 +133,8 @@ ApplicationWindow {
                     Button { text: "一键分配（勾选）"; onClicked: AppController.assignProxyPoolToCheckedProfiles() }
                     Button { text: "一键释放（勾选）"; onClicked: AppController.releaseProxyPoolFromCheckedProfiles() }
                     Button { text: "换一个（当前）"; onClicked: AppController.rotateProxyForSelectedProfile() }
+                    Button { text: "批量自检"; onClicked: AppController.testProxyPoolAll() }
+                    Button { text: "取消自检"; onClicked: AppController.cancelProxyPoolTestBatch() }
                     Item { Layout.fillWidth: true }
                     Button { text: "关闭"; onClicked: proxyPoolDialog.close() }
                 }

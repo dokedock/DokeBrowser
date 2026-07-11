@@ -36,8 +36,8 @@ public:
 
   const QVector<ProxyItem>& items() const;
   void setItems(const QVector<ProxyItem>& items);
+  void updateAt(int index, const ProxyItem& item);
 
 private:
   QVector<ProxyItem> m_items;
 };
-

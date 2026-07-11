@@ -77,3 +77,11 @@ void ProxyPoolModel::setItems(const QVector<ProxyItem>& items) {
   endResetModel();
 }
 
+void ProxyPoolModel::updateAt(int index, const ProxyItem& item) {
+  if (index < 0 || index >= m_items.size()) {
+    return;
+  }
+  m_items[index] = item;
+  const QModelIndex i = this->index(index, 0);
+  emit dataChanged(i, i);
+}

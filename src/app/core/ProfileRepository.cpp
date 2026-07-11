@@ -1502,3 +1502,35 @@ bool ProfileRepository::rotateProxyForProfile(const QString& profileId, QString*
   }
   return true;
 }
+
+bool ProfileRepository::updateProxyHealth(const QString& proxyId,
+                                         bool ok,
+                                         const QString& observedIp,
+                                         const QString& errorText,
+                                         qint64 tsMs,
+                                         QString* error) {
+  if (proxyId.trimmed().isEmpty()) {
+    if (error) {
+      *error = QStringLiteral("missing_proxy_id");
+    }
+    return false;
+  }
+  if (!ensureSchema(error)) {
+    return false;
+  }
+  QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+  QSqlQuery q(db);
+  q.prepare(QStringLiteral("UPDATE proxies SET last_ok=?, last_ip=?, last_error=?, last_at_ms=? WHERE id=?"));
+  q.addBindValue(b(ok));
+  q.addBindValue(nn(observedIp));
+  q.addBindValue(nn(errorText));
+  q.addBindValue(tsMs);
+  q.addBindValue(proxyId.trimmed());
+  if (!q.exec()) {
+    if (error) {
+      *error = q.lastError().text();
+    }
+    return false;
+  }
+  return true;
+}
