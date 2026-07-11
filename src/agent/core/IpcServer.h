@@ -30,4 +30,5 @@ private:
   FramedJsonSocket* m_peer = nullptr;
   QHash<QString, QProcess*> m_openvpnByProfileId;
   QHash<QString, QString> m_openvpnSocksAuthFileByProfileId;
+  QHash<QString, QProcess*> m_profileProcByProfileId;
 };

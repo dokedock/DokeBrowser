@@ -77,6 +77,37 @@ AppController::AppController(QObject* parent) : QObject(parent) {
     appendLogLine(QStringLiteral("ipc_connected=%1").arg(now ? "true" : "false"), QStringLiteral("ipc"));
   });
 
+  QObject::connect(m_ipc, &IpcClient::profileStatusReceived, this, [this](const QJsonObject& obj) {
+    const QString profileId = obj.value(QStringLiteral("profile_id")).toString().trimmed();
+    const QString status = obj.value(QStringLiteral("status")).toString().trimmed();
+    const QString err = obj.value(QStringLiteral("error")).toString();
+    if (profileId.isEmpty() || status.isEmpty()) {
+      return;
+    }
+
+    for (int i = 0; i < m_profiles->items().size(); i++) {
+      const auto& it = m_profiles->items().at(i);
+      if (it.id != profileId) {
+        continue;
+      }
+      auto updated = it;
+      updated.status = status;
+      if (status == QStringLiteral("running")) {
+        updated.lastOpenAtMs = QDateTime::currentMSecsSinceEpoch();
+      }
+      m_profiles->updateAt(i, updated);
+      persistProfile(updated);
+      break;
+    }
+
+    persistRunEvent(profileId, QStringLiteral("profile.status"), status, err);
+    appendLogLine(QStringLiteral("profile_status: %1 err=%2").arg(status, err), QStringLiteral("profile"), profileId);
+    if (profileId == selectedProfileId()) {
+      emit selectedProfileChanged();
+    }
+    applyFilters();
+  });
+
   QObject::connect(m_ipc, &IpcClient::proxyTestResultReceived, this, [this](const QJsonObject& obj) {
     const QString profileId = obj.value(QStringLiteral("profile_id")).toString(selectedProfileId());
     const QString batchId = obj.value(QStringLiteral("batch_id")).toString();
@@ -812,11 +843,11 @@ void AppController::runCheckedProfiles() {
       persistRunEvent(it.id, QStringLiteral("profile.start"), QStringLiteral("requested"), QString());
 
       auto updated = it;
-      updated.status = QStringLiteral("running");
+      updated.status = QStringLiteral("starting");
       updated.lastOpenAtMs = QDateTime::currentMSecsSinceEpoch();
       m_profiles->updateAt(i, updated);
       persistProfile(updated);
-      persistRunEvent(it.id, QStringLiteral("profile.start"), QStringLiteral("running"), QString());
+      persistRunEvent(it.id, QStringLiteral("profile.status"), QStringLiteral("starting"), QString());
       break;
     }
   }
@@ -850,10 +881,10 @@ void AppController::stopCheckedProfiles() {
       persistRunEvent(it.id, QStringLiteral("profile.stop"), QStringLiteral("requested"), QString());
 
       auto updated = it;
-      updated.status = QStringLiteral("stopped");
+      updated.status = QStringLiteral("stopping");
       m_profiles->updateAt(i, updated);
       persistProfile(updated);
-      persistRunEvent(it.id, QStringLiteral("profile.stop"), QStringLiteral("stopped"), QString());
+      persistRunEvent(it.id, QStringLiteral("profile.status"), QStringLiteral("stopping"), QString());
       break;
     }
   }
@@ -1474,10 +1505,10 @@ void AppController::runSelectedProfile() {
   persistRunEvent(it.id, QStringLiteral("profile.start"), QStringLiteral("requested"), QString());
 
   auto updated = it;
-  updated.status = QStringLiteral("running");
+  updated.status = QStringLiteral("starting");
   updated.lastOpenAtMs = QDateTime::currentMSecsSinceEpoch();
   updateSelectedProfileItem(updated);
-  persistRunEvent(it.id, QStringLiteral("profile.start"), QStringLiteral("running"), QString());
+  persistRunEvent(it.id, QStringLiteral("profile.status"), QStringLiteral("starting"), QString());
 }
 
 void AppController::stopSelectedProfile() {
@@ -1498,9 +1529,9 @@ void AppController::stopSelectedProfile() {
   persistRunEvent(it.id, QStringLiteral("profile.stop"), QStringLiteral("requested"), QString());
 
   auto updated = it;
-  updated.status = QStringLiteral("stopped");
+  updated.status = QStringLiteral("stopping");
   updateSelectedProfileItem(updated);
-  persistRunEvent(it.id, QStringLiteral("profile.stop"), QStringLiteral("stopped"), QString());
+  persistRunEvent(it.id, QStringLiteral("profile.status"), QStringLiteral("stopping"), QString());
 }
 
 void AppController::testSelectedProxy() {

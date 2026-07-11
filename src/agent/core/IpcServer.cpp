@@ -27,6 +27,15 @@ IpcServer::IpcServer(QObject* parent) : QObject(parent) {
 }
 
 IpcServer::~IpcServer() {
+  const auto profileKeys = m_profileProcByProfileId.keys();
+  for (const auto& k : profileKeys) {
+    QProcess* p = m_profileProcByProfileId.take(k);
+    if (p) {
+      p->kill();
+      p->deleteLater();
+    }
+  }
+
   const auto keys = m_openvpnByProfileId.keys();
   for (const auto& k : keys) {
     QProcess* p = m_openvpnByProfileId.take(k);
@@ -103,8 +112,25 @@ void IpcServer::onPeerJson(const QJsonObject& obj) {
   }
 
   if (type == QStringLiteral("profile.start") || type == QStringLiteral("profile.stop")) {
-    const QString profileId = obj.value(QStringLiteral("profile_id")).toString();
+    const QString profileId = obj.value(QStringLiteral("profile_id")).toString().trimmed();
     const QString profileName = obj.value(QStringLiteral("profile_name")).toString();
+
+    auto sendStatus = [this, profileId](const QString& status, const QString& error) {
+      if (!m_peer) {
+        return;
+      }
+      QJsonObject msg;
+      msg.insert(QStringLiteral("type"), QStringLiteral("profile.status"));
+      msg.insert(QStringLiteral("profile_id"), profileId);
+      msg.insert(QStringLiteral("status"), status);
+      msg.insert(QStringLiteral("error"), error);
+      m_peer->send(msg);
+    };
+
+    if (profileId.isEmpty()) {
+      sendStatus(QStringLiteral("error"), QStringLiteral("missing_profile_id"));
+      return;
+    }
 
     QJsonObject log;
     log.insert(QStringLiteral("type"), QStringLiteral("log.line"));
@@ -113,6 +139,65 @@ void IpcServer::onPeerJson(const QJsonObject& obj) {
                    .arg(type, profileName.isEmpty() ? QStringLiteral("-") : profileName,
                         profileId.isEmpty() ? QStringLiteral("-") : profileId));
     m_peer->send(log);
+
+    if (type == QStringLiteral("profile.stop")) {
+      QProcess* existing = m_profileProcByProfileId.value(profileId);
+      if (!existing || existing->state() == QProcess::NotRunning) {
+        sendStatus(QStringLiteral("stopped"), QString());
+        if (existing) {
+          m_profileProcByProfileId.remove(profileId);
+          existing->deleteLater();
+        }
+        return;
+      }
+
+      sendStatus(QStringLiteral("stopping"), QString());
+      existing->terminate();
+      if (!existing->waitForFinished(800)) {
+        existing->kill();
+      }
+      sendStatus(QStringLiteral("stopped"), QString());
+      m_profileProcByProfileId.remove(profileId);
+      existing->deleteLater();
+      return;
+    }
+
+    QProcess* existing = m_profileProcByProfileId.value(profileId);
+    if (existing && existing->state() != QProcess::NotRunning) {
+      sendStatus(QStringLiteral("running"), QString());
+      return;
+    }
+    if (existing) {
+      m_profileProcByProfileId.remove(profileId);
+      existing->deleteLater();
+      existing = nullptr;
+    }
+
+    QProcess* p = new QProcess(this);
+    QObject::connect(p, &QProcess::started, this, [sendStatus]() { sendStatus(QStringLiteral("running"), QString()); });
+    QObject::connect(p, &QProcess::finished, this, [this, profileId, sendStatus](int exitCode, QProcess::ExitStatus st) {
+      m_profileProcByProfileId.remove(profileId);
+      if (st == QProcess::CrashExit) {
+        sendStatus(QStringLiteral("crashed"), QStringLiteral("crash_exit"));
+      } else if (exitCode == 0) {
+        sendStatus(QStringLiteral("stopped"), QString());
+      } else {
+        sendStatus(QStringLiteral("crashed"), QStringLiteral("exit_code_%1").arg(exitCode));
+      }
+    });
+
+    m_profileProcByProfileId.insert(profileId, p);
+    sendStatus(QStringLiteral("starting"), QString());
+
+#if defined(Q_OS_WIN)
+    p->setProgram(QStringLiteral("cmd"));
+    p->setArguments({QStringLiteral("/c"), QStringLiteral("ping"), QStringLiteral("127.0.0.1"), QStringLiteral("-n"),
+                     QStringLiteral("3600")});
+#else
+    p->setProgram(QStringLiteral("sleep"));
+    p->setArguments({QStringLiteral("36000")});
+#endif
+    p->start();
     return;
   }
 

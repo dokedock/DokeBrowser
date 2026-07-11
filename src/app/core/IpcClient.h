@@ -25,6 +25,7 @@ signals:
   void connectedChanged();
   void logLineReceived(const QString& line);
   void connectionError(const QString& message);
+  void profileStatusReceived(const QJsonObject& result);
   void proxyTestResultReceived(const QJsonObject& result);
   void proxyPoolTestResultReceived(const QJsonObject& result);
   void vpnStatusReceived(const QJsonObject& result);

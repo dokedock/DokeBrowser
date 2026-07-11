@@ -83,6 +83,8 @@ cmake --build build -j 8
   - `{ "type": "log.line", "message": "..." }`
 - `profile.start/profile.stop`（App → Agent）
   - `{ "type": "profile.start", "profile_id": "...", "profile_name": "..." }`
+- `profile.status`（Agent → App）
+  - `{ "type": "profile.status", "profile_id": "...", "status": "starting|running|stopping|stopped|crashed|error", "error": "..." }`
 - `proxy.test`（App → Agent）
   - `{ "type": "proxy.test", "profile_id": "...", "proxy": { ... }, "url": "https://httpbin.org/ip", "request_id": "...", "batch_id": "..." }`
 - `proxy.test.result`（Agent → App）

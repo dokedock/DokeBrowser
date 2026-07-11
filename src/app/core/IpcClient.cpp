@@ -91,6 +91,10 @@ void IpcClient::onJsonReceived(const QJsonObject& obj) {
     emit logLineReceived(obj.value(QStringLiteral("message")).toString());
     return;
   }
+  if (type == QStringLiteral("profile.status")) {
+    emit profileStatusReceived(obj);
+    return;
+  }
   if (type == QStringLiteral("proxy.test.result")) {
     emit proxyTestResultReceived(obj);
     return;

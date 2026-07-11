@@ -370,8 +370,25 @@ ApplicationWindow {
                                         RowLayout {
                                             Layout.preferredWidth: 60
                                             spacing: 6
-                                            Rectangle { width: 10; height: 10; radius: 5; color: profileStatus === "running" ? "#52c41a" : "#bfbfbf" }
-                                            Label { text: profileStatus === "running" ? "运行" : "停止"; color: theme.text2 }
+                                            Rectangle {
+                                                width: 10
+                                                height: 10
+                                                radius: 5
+                                                color: profileStatus === "running" ? "#52c41a"
+                                                    : profileStatus === "starting" ? theme.primary
+                                                    : profileStatus === "stopping" ? "#fa8c16"
+                                                    : (profileStatus === "crashed" || profileStatus === "error") ? "#cf1322"
+                                                    : "#bfbfbf"
+                                            }
+                                            Label {
+                                                text: profileStatus === "running" ? "运行"
+                                                    : profileStatus === "starting" ? "启动中"
+                                                    : profileStatus === "stopping" ? "停止中"
+                                                    : profileStatus === "crashed" ? "崩溃"
+                                                    : profileStatus === "error" ? "错误"
+                                                    : "停止"
+                                                color: theme.text2
+                                            }
                                         }
                                         Label { text: profileName; Layout.preferredWidth: 200; color: theme.text }
                                         Label { text: profileGroup; Layout.preferredWidth: 140; color: theme.text2; elide: Text.ElideRight }
