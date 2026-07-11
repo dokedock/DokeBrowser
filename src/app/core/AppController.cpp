@@ -839,6 +839,15 @@ void AppController::runCheckedProfiles() {
       msg.insert(QStringLiteral("type"), QStringLiteral("profile.start"));
       msg.insert(QStringLiteral("profile_id"), it.id);
       msg.insert(QStringLiteral("profile_name"), it.name);
+      msg.insert(QStringLiteral("data_dir"), it.dataDir);
+      if (it.proxyEnabled) {
+        QJsonObject proxy;
+        proxy.insert(QStringLiteral("enabled"), true);
+        proxy.insert(QStringLiteral("type"), it.proxyType);
+        proxy.insert(QStringLiteral("host"), it.proxyHost);
+        proxy.insert(QStringLiteral("port"), it.proxyPort);
+        msg.insert(QStringLiteral("proxy"), proxy);
+      }
       m_ipc->send(msg);
       persistRunEvent(it.id, QStringLiteral("profile.start"), QStringLiteral("requested"), QString());
 
@@ -1501,6 +1510,15 @@ void AppController::runSelectedProfile() {
   msg.insert(QStringLiteral("type"), QStringLiteral("profile.start"));
   msg.insert(QStringLiteral("profile_id"), it.id);
   msg.insert(QStringLiteral("profile_name"), it.name);
+  msg.insert(QStringLiteral("data_dir"), it.dataDir);
+  if (it.proxyEnabled) {
+    QJsonObject proxy;
+    proxy.insert(QStringLiteral("enabled"), true);
+    proxy.insert(QStringLiteral("type"), it.proxyType);
+    proxy.insert(QStringLiteral("host"), it.proxyHost);
+    proxy.insert(QStringLiteral("port"), it.proxyPort);
+    msg.insert(QStringLiteral("proxy"), proxy);
+  }
   m_ipc->send(msg);
   persistRunEvent(it.id, QStringLiteral("profile.start"), QStringLiteral("requested"), QString());
 

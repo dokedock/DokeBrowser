@@ -15,9 +15,12 @@
 #include <QNetworkRequest>
 #include <QPointer>
 #include <QProcess>
+#include <QStandardPaths>
 #include <QTemporaryFile>
 #include <QTimer>
 #include <QUrl>
+#include <QDir>
+#include <QFileInfo>
 #include <functional>
 #include <memory>
 
@@ -114,6 +117,8 @@ void IpcServer::onPeerJson(const QJsonObject& obj) {
   if (type == QStringLiteral("profile.start") || type == QStringLiteral("profile.stop")) {
     const QString profileId = obj.value(QStringLiteral("profile_id")).toString().trimmed();
     const QString profileName = obj.value(QStringLiteral("profile_name")).toString();
+    const QString dataDirFromMsg = obj.value(QStringLiteral("data_dir")).toString();
+    const QJsonObject proxyObj = obj.value(QStringLiteral("proxy")).toObject();
 
     auto sendStatus = [this, profileId](const QString& status, const QString& error) {
       if (!m_peer) {
@@ -139,6 +144,93 @@ void IpcServer::onPeerJson(const QJsonObject& obj) {
                    .arg(type, profileName.isEmpty() ? QStringLiteral("-") : profileName,
                         profileId.isEmpty() ? QStringLiteral("-") : profileId));
     m_peer->send(log);
+
+    auto resolveChrome = []() -> QString {
+      const QStringList directCandidates = {
+#if defined(Q_OS_MAC)
+        QStringLiteral("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+        QStringLiteral("/Applications/Chromium.app/Contents/MacOS/Chromium"),
+#endif
+#if defined(Q_OS_WIN)
+        QString(),
+#endif
+      };
+
+      for (const auto& c : directCandidates) {
+        if (c.isEmpty()) {
+          continue;
+        }
+        if (QFileInfo::exists(c)) {
+          return c;
+        }
+      }
+
+#if defined(Q_OS_WIN)
+      const QString pf = qEnvironmentVariable("ProgramFiles");
+      const QString pfx86 = qEnvironmentVariable("ProgramFiles(x86)");
+      const QString local = qEnvironmentVariable("LocalAppData");
+      const QStringList winCandidates = {
+        pf.isEmpty() ? QString() : (pf + QStringLiteral("\\Google\\Chrome\\Application\\chrome.exe")),
+        pfx86.isEmpty() ? QString() : (pfx86 + QStringLiteral("\\Google\\Chrome\\Application\\chrome.exe")),
+        local.isEmpty() ? QString() : (local + QStringLiteral("\\Google\\Chrome\\Application\\chrome.exe")),
+        pf.isEmpty() ? QString() : (pf + QStringLiteral("\\Chromium\\Application\\chrome.exe")),
+        pfx86.isEmpty() ? QString() : (pfx86 + QStringLiteral("\\Chromium\\Application\\chrome.exe")),
+      };
+      for (const auto& c : winCandidates) {
+        if (c.isEmpty()) {
+          continue;
+        }
+        if (QFileInfo::exists(c)) {
+          return c;
+        }
+      }
+#endif
+
+      const QStringList names = {
+        QStringLiteral("google-chrome-stable"),
+        QStringLiteral("google-chrome"),
+        QStringLiteral("chrome"),
+        QStringLiteral("chromium"),
+        QStringLiteral("chromium-browser"),
+      };
+      for (const auto& n : names) {
+        const QString p = QStandardPaths::findExecutable(n);
+        if (!p.isEmpty()) {
+          return p;
+        }
+      }
+      return {};
+    };
+
+    auto resolveProfileDataDir = [profileId, dataDirFromMsg]() -> QString {
+      const QString v = dataDirFromMsg.trimmed();
+      if (!v.isEmpty()) {
+        return v;
+      }
+      const QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+      if (base.isEmpty()) {
+        return {};
+      }
+      return QDir(base).filePath(QStringLiteral("profiles/%1/chrome").arg(profileId));
+    };
+
+    auto buildProxyArg = [proxyObj]() -> QString {
+      const bool enabled = proxyObj.value(QStringLiteral("enabled")).toBool(false);
+      if (!enabled) {
+        return {};
+      }
+      const QString type = proxyObj.value(QStringLiteral("type")).toString().trimmed().toLower();
+      const QString host = proxyObj.value(QStringLiteral("host")).toString().trimmed();
+      const int port = proxyObj.value(QStringLiteral("port")).toInt(0);
+      if (type.isEmpty() || type == QStringLiteral("direct")) {
+        return {};
+      }
+      if (host.isEmpty() || port <= 0) {
+        return {};
+      }
+      const QString scheme = (type == QStringLiteral("socks5")) ? QStringLiteral("socks5") : QStringLiteral("http");
+      return QStringLiteral("--proxy-server=%1://%2:%3").arg(scheme, host, QString::number(port));
+    };
 
     if (type == QStringLiteral("profile.stop")) {
       QProcess* existing = m_profileProcByProfileId.value(profileId);
@@ -185,18 +277,83 @@ void IpcServer::onPeerJson(const QJsonObject& obj) {
         sendStatus(QStringLiteral("crashed"), QStringLiteral("exit_code_%1").arg(exitCode));
       }
     });
+    QObject::connect(p, &QProcess::readyReadStandardOutput, this, [this, p, profileId]() {
+      if (!m_peer) {
+        return;
+      }
+      const QString shortId = profileId.left(8);
+      const auto lines = QString::fromUtf8(p->readAllStandardOutput()).split('\n', Qt::SkipEmptyParts);
+      for (const auto& line : lines) {
+        QJsonObject log;
+        log.insert(QStringLiteral("type"), QStringLiteral("log.line"));
+        log.insert(QStringLiteral("message"), QStringLiteral("chrome[%1] %2").arg(shortId, line));
+        m_peer->send(log);
+      }
+    });
+    QObject::connect(p, &QProcess::readyReadStandardError, this, [this, p, profileId]() {
+      if (!m_peer) {
+        return;
+      }
+      const QString shortId = profileId.left(8);
+      const auto lines = QString::fromUtf8(p->readAllStandardError()).split('\n', Qt::SkipEmptyParts);
+      for (const auto& line : lines) {
+        QJsonObject log;
+        log.insert(QStringLiteral("type"), QStringLiteral("log.line"));
+        log.insert(QStringLiteral("message"), QStringLiteral("chrome[%1] %2").arg(shortId, line));
+        m_peer->send(log);
+      }
+    });
+    QObject::connect(p, &QProcess::errorOccurred, this, [this, profileId, sendStatus](QProcess::ProcessError) mutable {
+      sendStatus(QStringLiteral("error"), QStringLiteral("process_error"));
+      if (m_peer) {
+        QJsonObject log;
+        log.insert(QStringLiteral("type"), QStringLiteral("log.line"));
+        log.insert(QStringLiteral("message"), QStringLiteral("chrome[%1] error").arg(profileId.left(8)));
+        m_peer->send(log);
+      }
+    });
 
     m_profileProcByProfileId.insert(profileId, p);
     sendStatus(QStringLiteral("starting"), QString());
 
-#if defined(Q_OS_WIN)
-    p->setProgram(QStringLiteral("cmd"));
-    p->setArguments({QStringLiteral("/c"), QStringLiteral("ping"), QStringLiteral("127.0.0.1"), QStringLiteral("-n"),
-                     QStringLiteral("3600")});
-#else
-    p->setProgram(QStringLiteral("sleep"));
-    p->setArguments({QStringLiteral("36000")});
-#endif
+    const QString chromeExe = resolveChrome();
+    if (chromeExe.isEmpty()) {
+      sendStatus(QStringLiteral("error"), QStringLiteral("chrome_not_found"));
+      m_profileProcByProfileId.remove(profileId);
+      p->deleteLater();
+      return;
+    }
+
+    const QString userDataDir = resolveProfileDataDir();
+    if (userDataDir.isEmpty()) {
+      sendStatus(QStringLiteral("error"), QStringLiteral("invalid_data_dir"));
+      m_profileProcByProfileId.remove(profileId);
+      p->deleteLater();
+      return;
+    }
+    QDir().mkpath(userDataDir);
+
+    QStringList args;
+    args << QStringLiteral("--user-data-dir=%1").arg(userDataDir);
+    args << QStringLiteral("--no-first-run");
+    args << QStringLiteral("--no-default-browser-check");
+    args << QStringLiteral("--disable-sync");
+    args << QStringLiteral("--new-window");
+
+    const QString proxyArg = buildProxyArg();
+    if (!proxyArg.isEmpty()) {
+      args << proxyArg;
+    }
+
+    const QString url = obj.value(QStringLiteral("url")).toString().trimmed();
+    if (!url.isEmpty()) {
+      args << url;
+    } else {
+      args << QStringLiteral("about:blank");
+    }
+
+    p->setProgram(chromeExe);
+    p->setArguments(args);
     p->start();
     return;
   }

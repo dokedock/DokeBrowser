@@ -82,7 +82,7 @@ cmake --build build -j 8
 - `log.line`（Agent → App）
   - `{ "type": "log.line", "message": "..." }`
 - `profile.start/profile.stop`（App → Agent）
-  - `{ "type": "profile.start", "profile_id": "...", "profile_name": "..." }`
+  - `{ "type": "profile.start", "profile_id": "...", "profile_name": "...", "data_dir": "...", "proxy": { "enabled": true, "type":"http|https|socks5|direct", "host":"...", "port": 8080 } }`
 - `profile.status`（Agent → App）
   - `{ "type": "profile.status", "profile_id": "...", "status": "starting|running|stopping|stopped|crashed|error", "error": "..." }`
 - `proxy.test`（App → Agent）
