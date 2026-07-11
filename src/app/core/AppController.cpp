@@ -1095,65 +1095,11 @@ int AppController::importProxyPool(const QString& text) {
 }
 
 void AppController::assignProxyPoolToCheckedProfiles() {
-  if (!m_repo) {
-    return;
-  }
   const QStringList targets = m_checkedIds.isEmpty() ? QStringList{selectedProfileId()} : m_checkedIds;
   if (targets.isEmpty() || (targets.size() == 1 && targets.at(0).isEmpty())) {
     return;
   }
-
-  int okN = 0;
-  int failN = 0;
-  QSet<QString> updatedIds;
-  for (const auto& id : targets) {
-    const QString pid = id.trimmed();
-    if (pid.isEmpty()) {
-      continue;
-    }
-    QString err;
-    if (!m_repo->assignNextAvailableProxyToProfile(pid, &err)) {
-      appendLogLine(QStringLiteral("proxy_pool_assign_failed: %1").arg(err), QStringLiteral("proxy"), pid);
-      failN++;
-      continue;
-    }
-    okN++;
-    updatedIds.insert(pid);
-  }
-
-  if (!updatedIds.isEmpty()) {
-    QString loadErr;
-    const auto all = m_repo->loadAll(&loadErr);
-    if (!loadErr.isEmpty()) {
-      appendLogLine(QStringLiteral("profiles_db_error: %1").arg(loadErr), QStringLiteral("db"));
-    } else {
-      QHash<QString, ProfileListModel::ProfileItem> map;
-      map.reserve(all.size());
-      for (const auto& it : all) {
-        map.insert(it.id, it);
-      }
-      for (int i = 0; i < m_profiles->items().size(); i++) {
-        const auto& cur = m_profiles->items().at(i);
-        if (!updatedIds.contains(cur.id)) {
-          continue;
-        }
-        const auto fresh = map.value(cur.id);
-        auto updated = cur;
-        updated.proxyEnabled = fresh.proxyEnabled;
-        updated.proxyType = fresh.proxyType;
-        updated.proxyHost = fresh.proxyHost;
-        updated.proxyPort = fresh.proxyPort;
-        updated.proxyUsername = fresh.proxyUsername;
-        updated.proxyPassword = fresh.proxyPassword;
-        m_profiles->updateAt(i, updated);
-      }
-      if (updatedIds.contains(selectedProfileId())) {
-        emit selectedProfileChanged();
-      }
-    }
-  }
-  appendLogLine(QStringLiteral("proxy_pool_assign done ok=%1 fail=%2").arg(okN).arg(failN), QStringLiteral("proxy"));
-  refreshProxyPool();
+  assignProxyPoolToProfileIds(targets, true);
 }
 
 void AppController::releaseProxyPoolFromCheckedProfiles() {
@@ -1253,11 +1199,150 @@ void AppController::rotateProxyForSelectedProfile() {
   refreshProxyPool();
 }
 
-void AppController::testProxyPoolAll() {
+bool AppController::hasHealthyFreeProxy() const {
+  if (!m_proxyPool) {
+    return false;
+  }
+  for (const auto& it : m_proxyPool->items()) {
+    if (it.disabled) {
+      continue;
+    }
+    if (!it.assignedProfileId.trimmed().isEmpty()) {
+      continue;
+    }
+    if (it.lastOk) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void AppController::startProxyPoolTestBatch(const QStringList& proxyIds) {
   if (!m_ipcConnected) {
     appendLogLine(QStringLiteral("ipc_not_connected"), QStringLiteral("ipc"));
     return;
   }
+  if (proxyIds.isEmpty()) {
+    return;
+  }
+  if (!m_proxyPoolBatchTimer) {
+    m_proxyPoolBatchTimer = new QTimer(this);
+    m_proxyPoolBatchTimer->setInterval(200);
+    QObject::connect(m_proxyPoolBatchTimer, &QTimer::timeout, this, [this]() { pumpProxyPoolTestQueue(); });
+  }
+
+  m_proxyPoolBatchId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+  m_proxyPoolBatchQueue = proxyIds;
+  m_proxyPoolBatchInFlightStartMs.clear();
+  m_proxyPoolBatchInFlightRequestId.clear();
+  m_proxyPoolBatchRunning = true;
+  appendLogLine(QStringLiteral("proxy_pool_test_batch start n=%1 max_concurrent=%2 timeout_ms=%3")
+                    .arg(m_proxyPoolBatchQueue.size())
+                    .arg(m_proxyPoolBatchMaxConcurrent)
+                    .arg(m_proxyPoolBatchTimeoutMs),
+                QStringLiteral("proxy"));
+
+  if (!m_proxyPoolBatchTimer->isActive()) {
+    m_proxyPoolBatchTimer->start();
+  }
+  pumpProxyPoolTestQueue();
+}
+
+void AppController::assignProxyPoolToProfileIds(const QStringList& profileIds, bool allowAutoTest) {
+  if (!m_repo) {
+    return;
+  }
+  if (profileIds.isEmpty()) {
+    return;
+  }
+
+  if (allowAutoTest && !hasHealthyFreeProxy()) {
+    if (m_proxyPoolBatchRunning) {
+      m_proxyPoolAssignPending = true;
+      m_proxyPoolAssignPendingProfileIds = profileIds;
+      appendLogLine(QStringLiteral("proxy_pool_assign pending (batch_running) n=%1").arg(profileIds.size()), QStringLiteral("proxy"));
+      return;
+    }
+
+    QStringList queue;
+    if (m_proxyPool) {
+      QSet<QString> set;
+      for (const auto& it : m_proxyPool->items()) {
+        const QString id = it.id.trimmed();
+        if (id.isEmpty() || it.disabled || set.contains(id)) {
+          continue;
+        }
+        if (!it.assignedProfileId.trimmed().isEmpty()) {
+          continue;
+        }
+        set.insert(id);
+        queue.push_back(id);
+      }
+    }
+    if (!queue.isEmpty()) {
+      m_proxyPoolAssignPending = true;
+      m_proxyPoolAssignPendingProfileIds = profileIds;
+      appendLogLine(QStringLiteral("proxy_pool_assign waiting_for_health_check n=%1").arg(profileIds.size()), QStringLiteral("proxy"));
+      startProxyPoolTestBatch(queue);
+      return;
+    }
+  }
+
+  int okN = 0;
+  int failN = 0;
+  QSet<QString> updatedIds;
+  for (const auto& id : profileIds) {
+    const QString pid = id.trimmed();
+    if (pid.isEmpty()) {
+      continue;
+    }
+    QString err;
+    if (!m_repo->assignNextAvailableProxyToProfile(pid, &err)) {
+      appendLogLine(QStringLiteral("proxy_pool_assign_failed: %1").arg(err), QStringLiteral("proxy"), pid);
+      failN++;
+      continue;
+    }
+    okN++;
+    updatedIds.insert(pid);
+  }
+
+  if (!updatedIds.isEmpty()) {
+    QString loadErr;
+    const auto all = m_repo->loadAll(&loadErr);
+    if (!loadErr.isEmpty()) {
+      appendLogLine(QStringLiteral("profiles_db_error: %1").arg(loadErr), QStringLiteral("db"));
+    } else {
+      QHash<QString, ProfileListModel::ProfileItem> map;
+      map.reserve(all.size());
+      for (const auto& it : all) {
+        map.insert(it.id, it);
+      }
+      for (int i = 0; i < m_profiles->items().size(); i++) {
+        const auto& cur = m_profiles->items().at(i);
+        if (!updatedIds.contains(cur.id)) {
+          continue;
+        }
+        const auto fresh = map.value(cur.id);
+        auto updated = cur;
+        updated.proxyEnabled = fresh.proxyEnabled;
+        updated.proxyType = fresh.proxyType;
+        updated.proxyHost = fresh.proxyHost;
+        updated.proxyPort = fresh.proxyPort;
+        updated.proxyUsername = fresh.proxyUsername;
+        updated.proxyPassword = fresh.proxyPassword;
+        m_profiles->updateAt(i, updated);
+      }
+      if (updatedIds.contains(selectedProfileId())) {
+        emit selectedProfileChanged();
+      }
+    }
+  }
+
+  appendLogLine(QStringLiteral("proxy_pool_assign done ok=%1 fail=%2").arg(okN).arg(failN), QStringLiteral("proxy"));
+  refreshProxyPool();
+}
+
+void AppController::testProxyPoolAll() {
   if (!m_proxyPool) {
     return;
   }
@@ -1275,28 +1360,7 @@ void AppController::testProxyPoolAll() {
   if (queue.isEmpty()) {
     return;
   }
-
-  if (!m_proxyPoolBatchTimer) {
-    m_proxyPoolBatchTimer = new QTimer(this);
-    m_proxyPoolBatchTimer->setInterval(200);
-    QObject::connect(m_proxyPoolBatchTimer, &QTimer::timeout, this, [this]() { pumpProxyPoolTestQueue(); });
-  }
-
-  m_proxyPoolBatchId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-  m_proxyPoolBatchQueue = queue;
-  m_proxyPoolBatchInFlightStartMs.clear();
-  m_proxyPoolBatchInFlightRequestId.clear();
-  m_proxyPoolBatchRunning = true;
-  appendLogLine(QStringLiteral("proxy_pool_test_batch start n=%1 max_concurrent=%2 timeout_ms=%3")
-                    .arg(m_proxyPoolBatchQueue.size())
-                    .arg(m_proxyPoolBatchMaxConcurrent)
-                    .arg(m_proxyPoolBatchTimeoutMs),
-                QStringLiteral("proxy"));
-
-  if (!m_proxyPoolBatchTimer->isActive()) {
-    m_proxyPoolBatchTimer->start();
-  }
-  pumpProxyPoolTestQueue();
+  startProxyPoolTestBatch(queue);
 }
 
 void AppController::cancelProxyPoolTestBatch() {
@@ -1308,6 +1372,8 @@ void AppController::cancelProxyPoolTestBatch() {
   m_proxyPoolBatchQueue.clear();
   m_proxyPoolBatchInFlightStartMs.clear();
   m_proxyPoolBatchInFlightRequestId.clear();
+  m_proxyPoolAssignPending = false;
+  m_proxyPoolAssignPendingProfileIds.clear();
   if (m_proxyPoolBatchTimer) {
     m_proxyPoolBatchTimer->stop();
   }
@@ -2405,6 +2471,13 @@ void AppController::pumpProxyPoolTestQueue() {
       m_proxyPoolBatchTimer->stop();
     }
     appendLogLine(QStringLiteral("proxy_pool_test_batch done"), QStringLiteral("proxy"));
+
+    if (m_proxyPoolAssignPending && !m_proxyPoolAssignPendingProfileIds.isEmpty()) {
+      const auto pending = m_proxyPoolAssignPendingProfileIds;
+      m_proxyPoolAssignPending = false;
+      m_proxyPoolAssignPendingProfileIds.clear();
+      assignProxyPoolToProfileIds(pending, false);
+    }
   }
 }
 

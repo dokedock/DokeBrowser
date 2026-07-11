@@ -238,10 +238,13 @@ private:
                            const QString& errorText);
   void rebuildGroups();
   void emitCheckedProfileIds();
+  void assignProxyPoolToProfileIds(const QStringList& profileIds, bool allowAutoTest);
+  bool hasHealthyFreeProxy() const;
   QString sendProxyTestRequest(const QString& profileId);
   void pumpProxyTestQueue();
   void finishProxyTestSlot(const QString& profileId, const QString& reason);
   QString sendProxyPoolTestRequest(const QString& proxyId);
+  void startProxyPoolTestBatch(const QStringList& proxyIds);
   void pumpProxyPoolTestQueue();
   void finishProxyPoolTestSlot(const QString& proxyId, const QString& reason);
   QString newProfileName() const;
@@ -286,5 +289,7 @@ private:
   QHash<QString, qint64> m_proxyPoolBatchInFlightStartMs;
   QHash<QString, QString> m_proxyPoolBatchInFlightRequestId;
   QTimer* m_proxyPoolBatchTimer = nullptr;
+  bool m_proxyPoolAssignPending = false;
+  QStringList m_proxyPoolAssignPendingProfileIds;
   QHash<QString, QString> m_vpnStatusByProfileId;
 };
