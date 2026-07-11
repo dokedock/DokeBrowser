@@ -1,0 +1,9 @@
+<RCC>
+  <qresource prefix="/qml">
+    <file alias="Main.qml">Main.qml</file>
+  </qresource>
+  <qresource prefix="/assets">
+    <file alias="DKIcon.png">../../../DKIcon.png</file>
+  </qresource>
+</RCC>
+
