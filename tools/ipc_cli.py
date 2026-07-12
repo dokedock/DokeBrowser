@@ -59,6 +59,45 @@ def main():
         profile_id = sys.argv[2] if len(sys.argv) > 2 else "demo"
         data_dir = sys.argv[3] if len(sys.argv) > 3 else os.path.join(os.environ.get("TMPDIR") or "/tmp", "doke_demo_profile")
         url = sys.argv[4] if len(sys.argv) > 4 else "https://example.com"
+        language = sys.argv[5] if len(sys.argv) > 5 else ""
+        timezone = sys.argv[6] if len(sys.argv) > 6 else ""
+        resolution = sys.argv[7] if len(sys.argv) > 7 else ""
+        touch_enabled_raw = sys.argv[8] if len(sys.argv) > 8 else ""
+        touch_enabled = touch_enabled_raw.lower() in ("1", "true", "yes", "y", "on")
+        user_agent = sys.argv[9] if len(sys.argv) > 9 else ""
+        platform = sys.argv[10] if len(sys.argv) > 10 else ""
+        hardware_concurrency_raw = sys.argv[11] if len(sys.argv) > 11 else ""
+        device_memory_gb_raw = sys.argv[12] if len(sys.argv) > 12 else ""
+        device_scale_factor_raw = sys.argv[13] if len(sys.argv) > 13 else ""
+        geo_enabled_raw = sys.argv[14] if len(sys.argv) > 14 else ""
+        geo_latitude_raw = sys.argv[15] if len(sys.argv) > 15 else ""
+        geo_longitude_raw = sys.argv[16] if len(sys.argv) > 16 else ""
+        geo_accuracy_raw = sys.argv[17] if len(sys.argv) > 17 else ""
+        try:
+            hardware_concurrency = int(hardware_concurrency_raw) if hardware_concurrency_raw else 0
+        except Exception:
+            hardware_concurrency = 0
+        try:
+            device_memory_gb = int(device_memory_gb_raw) if device_memory_gb_raw else 0
+        except Exception:
+            device_memory_gb = 0
+        try:
+            device_scale_factor = float(device_scale_factor_raw) if device_scale_factor_raw else 0
+        except Exception:
+            device_scale_factor = 0
+        geo_enabled = geo_enabled_raw.lower() in ("1", "true", "yes", "y", "on")
+        try:
+            geo_latitude = float(geo_latitude_raw) if geo_latitude_raw else 0
+        except Exception:
+            geo_latitude = 0
+        try:
+            geo_longitude = float(geo_longitude_raw) if geo_longitude_raw else 0
+        except Exception:
+            geo_longitude = 0
+        try:
+            geo_accuracy = float(geo_accuracy_raw) if geo_accuracy_raw else 0
+        except Exception:
+            geo_accuracy = 0
         os.makedirs(data_dir, exist_ok=True)
         send(
             s,
@@ -68,6 +107,19 @@ def main():
                 "profile_name": profile_id,
                 "data_dir": data_dir,
                 "url": url,
+                "language": language,
+                "user_agent": user_agent,
+                "platform": platform,
+                "hardware_concurrency": hardware_concurrency,
+                "device_memory_gb": device_memory_gb,
+                "device_scale_factor": device_scale_factor,
+                "timezone": timezone,
+                "resolution": resolution,
+                "touch_enabled": touch_enabled,
+                "geo_enabled": geo_enabled,
+                "geo_latitude": geo_latitude,
+                "geo_longitude": geo_longitude,
+                "geo_accuracy": geo_accuracy,
             },
         )
         read_loop(s, 8.0)
@@ -83,6 +135,45 @@ def main():
         profile_id = sys.argv[2] if len(sys.argv) > 2 else "demo"
         data_dir = sys.argv[3] if len(sys.argv) > 3 else os.path.join(os.environ.get("TMPDIR") or "/tmp", "doke_demo_profile")
         url = sys.argv[4] if len(sys.argv) > 4 else "https://example.com"
+        language = sys.argv[5] if len(sys.argv) > 5 else ""
+        timezone = sys.argv[6] if len(sys.argv) > 6 else ""
+        resolution = sys.argv[7] if len(sys.argv) > 7 else ""
+        touch_enabled_raw = sys.argv[8] if len(sys.argv) > 8 else ""
+        touch_enabled = touch_enabled_raw.lower() in ("1", "true", "yes", "y", "on")
+        user_agent = sys.argv[9] if len(sys.argv) > 9 else ""
+        platform = sys.argv[10] if len(sys.argv) > 10 else ""
+        hardware_concurrency_raw = sys.argv[11] if len(sys.argv) > 11 else ""
+        device_memory_gb_raw = sys.argv[12] if len(sys.argv) > 12 else ""
+        device_scale_factor_raw = sys.argv[13] if len(sys.argv) > 13 else ""
+        geo_enabled_raw = sys.argv[14] if len(sys.argv) > 14 else ""
+        geo_latitude_raw = sys.argv[15] if len(sys.argv) > 15 else ""
+        geo_longitude_raw = sys.argv[16] if len(sys.argv) > 16 else ""
+        geo_accuracy_raw = sys.argv[17] if len(sys.argv) > 17 else ""
+        try:
+            hardware_concurrency = int(hardware_concurrency_raw) if hardware_concurrency_raw else 0
+        except Exception:
+            hardware_concurrency = 0
+        try:
+            device_memory_gb = int(device_memory_gb_raw) if device_memory_gb_raw else 0
+        except Exception:
+            device_memory_gb = 0
+        try:
+            device_scale_factor = float(device_scale_factor_raw) if device_scale_factor_raw else 0
+        except Exception:
+            device_scale_factor = 0
+        geo_enabled = geo_enabled_raw.lower() in ("1", "true", "yes", "y", "on")
+        try:
+            geo_latitude = float(geo_latitude_raw) if geo_latitude_raw else 0
+        except Exception:
+            geo_latitude = 0
+        try:
+            geo_longitude = float(geo_longitude_raw) if geo_longitude_raw else 0
+        except Exception:
+            geo_longitude = 0
+        try:
+            geo_accuracy = float(geo_accuracy_raw) if geo_accuracy_raw else 0
+        except Exception:
+            geo_accuracy = 0
         os.makedirs(data_dir, exist_ok=True)
         send(s, {"type": "hello", "client": "cli"})
         read_loop(s, 1.0)
@@ -94,6 +185,19 @@ def main():
                 "profile_name": profile_id,
                 "data_dir": data_dir,
                 "url": url,
+                "language": language,
+                "user_agent": user_agent,
+                "platform": platform,
+                "hardware_concurrency": hardware_concurrency,
+                "device_memory_gb": device_memory_gb,
+                "device_scale_factor": device_scale_factor,
+                "timezone": timezone,
+                "resolution": resolution,
+                "touch_enabled": touch_enabled,
+                "geo_enabled": geo_enabled,
+                "geo_latitude": geo_latitude,
+                "geo_longitude": geo_longitude,
+                "geo_accuracy": geo_accuracy,
             },
         )
         read_loop(s, 6.0)
@@ -106,4 +210,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

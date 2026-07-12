@@ -19,3 +19,7 @@ cmake -S . -B build -DCMAKE_PREFIX_PATH="$QT_PREFIX/lib/cmake"
 cmake --build build -j 8
 ./build/src/app/dokebrowser.app/Contents/MacOS/dokebrowser
 ```
+
+## 参考项目
+- XChrome / zchrome：https://github.com/chanawudi/XChrome
+- VirtualBrowser：https://github.com/Virtual-Browser/VirtualBrowser

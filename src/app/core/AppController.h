@@ -16,6 +16,7 @@ class ProfileRepository;
 
 class QProcess;
 class QTimer;
+class QNetworkAccessManager;
 
 class AppController : public QObject {
   Q_OBJECT
@@ -43,7 +44,19 @@ class AppController : public QObject {
 
   Q_PROPERTY(QString selectedProfileDataDir READ selectedProfileDataDir WRITE setSelectedProfileDataDir NOTIFY
                  selectedProfileChanged)
+  Q_PROPERTY(QString selectedProfileFingerprintMode READ selectedProfileFingerprintMode WRITE setSelectedProfileFingerprintMode NOTIFY
+                 selectedProfileChanged)
   Q_PROPERTY(QString selectedProfileLanguage READ selectedProfileLanguage WRITE setSelectedProfileLanguage NOTIFY
+                 selectedProfileChanged)
+  Q_PROPERTY(QString selectedProfileUserAgent READ selectedProfileUserAgent WRITE setSelectedProfileUserAgent NOTIFY
+                 selectedProfileChanged)
+  Q_PROPERTY(QString selectedProfilePlatform READ selectedProfilePlatform WRITE setSelectedProfilePlatform NOTIFY
+                 selectedProfileChanged)
+  Q_PROPERTY(int selectedProfileHardwareConcurrency READ selectedProfileHardwareConcurrency WRITE setSelectedProfileHardwareConcurrency NOTIFY
+                 selectedProfileChanged)
+  Q_PROPERTY(int selectedProfileDeviceMemoryGb READ selectedProfileDeviceMemoryGb WRITE setSelectedProfileDeviceMemoryGb NOTIFY
+                 selectedProfileChanged)
+  Q_PROPERTY(double selectedProfileDeviceScaleFactor READ selectedProfileDeviceScaleFactor WRITE setSelectedProfileDeviceScaleFactor NOTIFY
                  selectedProfileChanged)
   Q_PROPERTY(QString selectedProfileTimezone READ selectedProfileTimezone WRITE setSelectedProfileTimezone NOTIFY
                  selectedProfileChanged)
@@ -105,8 +118,20 @@ public:
 
   QString selectedProfileDataDir() const;
   void setSelectedProfileDataDir(const QString& value);
+  QString selectedProfileFingerprintMode() const;
+  void setSelectedProfileFingerprintMode(const QString& value);
   QString selectedProfileLanguage() const;
   void setSelectedProfileLanguage(const QString& value);
+  QString selectedProfileUserAgent() const;
+  void setSelectedProfileUserAgent(const QString& value);
+  QString selectedProfilePlatform() const;
+  void setSelectedProfilePlatform(const QString& value);
+  int selectedProfileHardwareConcurrency() const;
+  void setSelectedProfileHardwareConcurrency(int value);
+  int selectedProfileDeviceMemoryGb() const;
+  void setSelectedProfileDeviceMemoryGb(int value);
+  double selectedProfileDeviceScaleFactor() const;
+  void setSelectedProfileDeviceScaleFactor(double value);
   QString selectedProfileTimezone() const;
   void setSelectedProfileTimezone(const QString& value);
   QString selectedProfileResolution() const;
@@ -171,6 +196,7 @@ public:
   Q_INVOKABLE void startAgent();
   Q_INVOKABLE void stopAgent();
   Q_INVOKABLE void clearLogs();
+  Q_INVOKABLE void copyLogsToClipboard();
 
   Q_INVOKABLE void setLogViewMode(const QString& mode);
   Q_INVOKABLE void loadHistory(const QString& mode, const QString& keyword, const QString& from, const QString& to);
@@ -209,6 +235,8 @@ public:
   Q_INVOKABLE void rotateProxyForSelectedProfile();
   Q_INVOKABLE void testProxyPoolAll();
   Q_INVOKABLE void cancelProxyPoolTestBatch();
+
+  Q_INVOKABLE void randomizeSelectedFingerprint();
 
 signals:
   void selectedProfileIndexChanged();
@@ -252,6 +280,7 @@ private:
   bool hasSelectedProfile() const;
   ProfileListModel::ProfileItem selectedProfileItem() const;
   void updateSelectedProfileItem(const ProfileListModel::ProfileItem& item);
+  void applyProxyGeoToProfile(const QString& profileId, const QString& ip);
 
   ProfileListModel* m_profiles = nullptr;
   ProfileFilterModel* m_filtered = nullptr;
@@ -269,6 +298,7 @@ private:
   QProcess* m_agent = nullptr;
   IpcClient* m_ipc = nullptr;
   ProfileRepository* m_repo = nullptr;
+  QNetworkAccessManager* m_http = nullptr;
   bool m_ipcConnected = false;
   bool m_liveLogsEnabled = true;
   QString m_logViewMode = QStringLiteral("实时日志");

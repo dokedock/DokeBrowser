@@ -8,6 +8,8 @@
 class FramedJsonSocket;
 class QLocalServer;
 class QProcess;
+class CdpClient;
+class HttpProxyMapper;
 
 class IpcServer : public QObject {
   Q_OBJECT
@@ -32,5 +34,8 @@ private:
   QHash<QString, QProcess*> m_openvpnByProfileId;
   QHash<QString, QString> m_openvpnSocksAuthFileByProfileId;
   QHash<QString, QProcess*> m_profileProcByProfileId;
+  QHash<QString, QString> m_chromeProxyAuthExtDirByProfileId;
+  QHash<QString, HttpProxyMapper*> m_proxyMapperByProfileId;
+  QHash<QString, CdpClient*> m_cdpByProfileId;
   QSet<QString> m_profileStopRequested;
 };

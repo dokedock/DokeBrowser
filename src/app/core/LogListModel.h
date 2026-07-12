@@ -18,9 +18,9 @@ public:
   QHash<int, QByteArray> roleNames() const override;
 
   Q_INVOKABLE void clear();
+  Q_INVOKABLE QString dump() const;
   void appendLine(const QString& line);
 
 private:
   QStringList m_lines;
 };
-

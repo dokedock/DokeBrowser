@@ -4,6 +4,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QSet>
 #include <QSqlDatabase>
 #include <QSqlError>
 #include <QSqlQuery>
@@ -63,9 +64,15 @@ ProfileRepository::~ProfileRepository() {
 }
 
 QString ProfileRepository::dbFilePath() const {
-  const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+  QString dir;
+  const QString sandbox = qEnvironmentVariable("TRAE_SANDBOX_STORAGE_PATH").trimmed();
+  if (!sandbox.isEmpty()) {
+    dir = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation)).filePath(QStringLiteral("dokebrowser"));
+  } else {
+    dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+  }
   QDir().mkpath(dir);
-  return dir + QStringLiteral("/profiles.sqlite");
+  return QDir(dir).filePath(QStringLiteral("profiles.sqlite"));
 }
 
 bool ProfileRepository::open(QString* error) {
@@ -107,13 +114,61 @@ bool ProfileRepository::ensureSchema(QString* error) {
                               "created_at_ms INTEGER NOT NULL DEFAULT 0,"
                               "last_open_at_ms INTEGER NOT NULL DEFAULT 0,"
                               "data_dir TEXT NOT NULL DEFAULT '',"
+                              "fingerprint_mode TEXT NOT NULL DEFAULT 'follow_ip',"
                               "language TEXT NOT NULL DEFAULT 'zh-CN',"
+                              "user_agent TEXT NOT NULL DEFAULT '',"
+                              "platform TEXT NOT NULL DEFAULT '',"
+                              "hardware_concurrency INTEGER NOT NULL DEFAULT 0,"
+                              "device_memory_gb INTEGER NOT NULL DEFAULT 0,"
+                              "device_scale_factor REAL NOT NULL DEFAULT 0,"
                               "timezone TEXT NOT NULL DEFAULT '',"
                               "resolution TEXT NOT NULL DEFAULT '1920x1080',"
-                              "touch_enabled INTEGER NOT NULL DEFAULT 0"
+                              "touch_enabled INTEGER NOT NULL DEFAULT 0,"
+                              "geo_enabled INTEGER NOT NULL DEFAULT 0,"
+                              "geo_latitude REAL NOT NULL DEFAULT 0,"
+                              "geo_longitude REAL NOT NULL DEFAULT 0,"
+                              "geo_accuracy REAL NOT NULL DEFAULT 0"
                               ");"),
                error)) {
     return false;
+  }
+
+  {
+    QSet<QString> cols;
+    QSqlQuery q(db);
+    if (q.exec(QStringLiteral("PRAGMA table_info(profiles);"))) {
+      while (q.next()) {
+        cols.insert(q.value(1).toString());
+      }
+    }
+    struct AddCol {
+      QString name;
+      QString ddl;
+    };
+    const QVector<AddCol> need = {
+        {QStringLiteral("fingerprint_mode"),
+         QStringLiteral("ALTER TABLE profiles ADD COLUMN fingerprint_mode TEXT NOT NULL DEFAULT 'follow_ip';")},
+        {QStringLiteral("user_agent"), QStringLiteral("ALTER TABLE profiles ADD COLUMN user_agent TEXT NOT NULL DEFAULT '';")},
+        {QStringLiteral("platform"), QStringLiteral("ALTER TABLE profiles ADD COLUMN platform TEXT NOT NULL DEFAULT '';")},
+        {QStringLiteral("hardware_concurrency"),
+         QStringLiteral("ALTER TABLE profiles ADD COLUMN hardware_concurrency INTEGER NOT NULL DEFAULT 0;")},
+        {QStringLiteral("device_memory_gb"),
+         QStringLiteral("ALTER TABLE profiles ADD COLUMN device_memory_gb INTEGER NOT NULL DEFAULT 0;")},
+        {QStringLiteral("device_scale_factor"),
+         QStringLiteral("ALTER TABLE profiles ADD COLUMN device_scale_factor REAL NOT NULL DEFAULT 0;")},
+        {QStringLiteral("geo_enabled"), QStringLiteral("ALTER TABLE profiles ADD COLUMN geo_enabled INTEGER NOT NULL DEFAULT 0;")},
+        {QStringLiteral("geo_latitude"), QStringLiteral("ALTER TABLE profiles ADD COLUMN geo_latitude REAL NOT NULL DEFAULT 0;")},
+        {QStringLiteral("geo_longitude"), QStringLiteral("ALTER TABLE profiles ADD COLUMN geo_longitude REAL NOT NULL DEFAULT 0;")},
+        {QStringLiteral("geo_accuracy"), QStringLiteral("ALTER TABLE profiles ADD COLUMN geo_accuracy REAL NOT NULL DEFAULT 0;")},
+    };
+    for (const auto& it : need) {
+      if (cols.contains(it.name)) {
+        continue;
+      }
+      if (!execSql(db, it.ddl, error)) {
+        return false;
+      }
+    }
   }
 
   if (!execSql(db,
@@ -279,7 +334,8 @@ QVector<ProfileListModel::ProfileItem> ProfileRepository::loadAll(QString* error
   q.prepare(QStringLiteral(
       "SELECT "
       "p.id, p.name, p.group_name, p.remark, p.status, p.created_at_ms, p.last_open_at_ms, p.data_dir, "
-      "p.language, p.timezone, p.resolution, p.touch_enabled, "
+      "p.fingerprint_mode, p.language, p.user_agent, p.platform, p.hardware_concurrency, p.device_memory_gb, p.device_scale_factor, "
+      "p.timezone, p.resolution, p.touch_enabled, p.geo_enabled, p.geo_latitude, p.geo_longitude, p.geo_accuracy, "
       "pc.enabled, pc.type, pc.host, pc.port, pc.username, pc.password, "
       "vc.enabled, vc.exe, vc.config, vc.use_socks, vc.socks_host, vc.socks_port, vc.socks_username, vc.socks_password "
       "FROM profiles p "
@@ -304,26 +360,57 @@ QVector<ProfileListModel::ProfileItem> ProfileRepository::loadAll(QString* error
     it.createdAtMs = q.value(5).toLongLong();
     it.lastOpenAtMs = q.value(6).toLongLong();
     it.dataDir = q.value(7).toString();
-    it.language = q.value(8).toString();
-    it.timezone = q.value(9).toString();
-    it.resolution = q.value(10).toString();
-    it.touchEnabled = q.value(11).toInt() != 0;
+    it.fingerprintMode = q.value(8).toString();
+    if (it.fingerprintMode.isEmpty()) {
+      it.fingerprintMode = QStringLiteral("follow_ip");
+    }
+    it.language = q.value(9).toString();
+    it.userAgent = q.value(10).toString();
+    it.platform = q.value(11).toString();
+    it.hardwareConcurrency = q.value(12).toInt();
+    it.deviceMemoryGb = q.value(13).toInt();
+    it.deviceScaleFactor = q.value(14).toDouble();
+    if (it.platform.isEmpty()) {
+#if defined(Q_OS_MAC)
+      it.platform = QStringLiteral("MacIntel");
+#elif defined(Q_OS_WIN)
+      it.platform = QStringLiteral("Win32");
+#else
+      it.platform = QStringLiteral("Linux x86_64");
+#endif
+    }
+    if (it.hardwareConcurrency <= 0) {
+      it.hardwareConcurrency = 8;
+    }
+    if (it.deviceMemoryGb <= 0) {
+      it.deviceMemoryGb = 8;
+    }
+    if (it.deviceScaleFactor <= 0) {
+      it.deviceScaleFactor = 1.0;
+    }
+    it.timezone = q.value(15).toString();
+    it.resolution = q.value(16).toString();
+    it.touchEnabled = q.value(17).toInt() != 0;
+    it.geoEnabled = q.value(18).toInt() != 0;
+    it.geoLatitude = q.value(19).toDouble();
+    it.geoLongitude = q.value(20).toDouble();
+    it.geoAccuracy = q.value(21).toDouble();
 
-    it.proxyEnabled = q.value(12).toInt() != 0;
-    it.proxyType = q.value(13).toString();
-    it.proxyHost = q.value(14).toString();
-    it.proxyPort = q.value(15).toInt();
-    it.proxyUsername = q.value(16).toString();
-    it.proxyPassword = q.value(17).toString();
+    it.proxyEnabled = q.value(22).toInt() != 0;
+    it.proxyType = q.value(23).toString();
+    it.proxyHost = q.value(24).toString();
+    it.proxyPort = q.value(25).toInt();
+    it.proxyUsername = q.value(26).toString();
+    it.proxyPassword = q.value(27).toString();
 
-    it.vpnEnabled = q.value(18).toInt() != 0;
-    it.openvpnExe = q.value(19).toString();
-    it.openvpnConfig = q.value(20).toString();
-    it.openvpnUseSocks = q.value(21).toInt() != 0;
-    it.openvpnSocksHost = q.value(22).toString();
-    it.openvpnSocksPort = q.value(23).toInt();
-    it.openvpnSocksUsername = q.value(24).toString();
-    it.openvpnSocksPassword = q.value(25).toString();
+    it.vpnEnabled = q.value(28).toInt() != 0;
+    it.openvpnExe = q.value(29).toString();
+    it.openvpnConfig = q.value(30).toString();
+    it.openvpnUseSocks = q.value(31).toInt() != 0;
+    it.openvpnSocksHost = q.value(32).toString();
+    it.openvpnSocksPort = q.value(33).toInt();
+    it.openvpnSocksUsername = q.value(34).toString();
+    it.openvpnSocksPassword = q.value(35).toString();
 
     out.push_back(it);
   }
@@ -346,26 +433,40 @@ bool ProfileRepository::upsert(const ProfileListModel::ProfileItem& item, QStrin
 
   QSqlQuery p(db);
   p.prepare(QStringLiteral(
-      "INSERT INTO profiles (id, name, group_name, remark, status, created_at_ms, last_open_at_ms, data_dir, language, "
-      "timezone, resolution, touch_enabled) "
-      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+      "INSERT INTO profiles (id, name, group_name, remark, status, created_at_ms, last_open_at_ms, data_dir, fingerprint_mode, "
+      "language, user_agent, platform, hardware_concurrency, device_memory_gb, device_scale_factor, timezone, resolution, "
+      "touch_enabled, geo_enabled, geo_latitude, geo_longitude, geo_accuracy) "
+      "VALUES (?, ?, ?, COALESCE(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
       "ON CONFLICT(id) DO UPDATE SET "
-      "name=excluded.name, group_name=excluded.group_name, remark=excluded.remark, status=excluded.status, "
+      "name=excluded.name, group_name=excluded.group_name, remark=COALESCE(excluded.remark, ''), status=excluded.status, "
       "created_at_ms=excluded.created_at_ms, last_open_at_ms=excluded.last_open_at_ms, data_dir=excluded.data_dir, "
-      "language=excluded.language, timezone=excluded.timezone, resolution=excluded.resolution, "
-      "touch_enabled=excluded.touch_enabled"));
+      "fingerprint_mode=excluded.fingerprint_mode, language=excluded.language, user_agent=excluded.user_agent, "
+      "platform=excluded.platform, hardware_concurrency=excluded.hardware_concurrency, device_memory_gb=excluded.device_memory_gb, "
+      "device_scale_factor=excluded.device_scale_factor, timezone=excluded.timezone, resolution=excluded.resolution, "
+      "touch_enabled=excluded.touch_enabled, geo_enabled=excluded.geo_enabled, geo_latitude=excluded.geo_latitude, "
+      "geo_longitude=excluded.geo_longitude, geo_accuracy=excluded.geo_accuracy"));
   p.addBindValue(item.id);
-  p.addBindValue(item.name);
-  p.addBindValue(item.group);
-  p.addBindValue(item.remark);
-  p.addBindValue(item.status);
+  p.addBindValue(nn(item.name));
+  p.addBindValue(nn(item.group));
+  p.addBindValue(nn(item.remark));
+  p.addBindValue(nn(item.status));
   p.addBindValue(item.createdAtMs);
   p.addBindValue(item.lastOpenAtMs);
-  p.addBindValue(item.dataDir);
-  p.addBindValue(item.language);
-  p.addBindValue(item.timezone);
-  p.addBindValue(item.resolution);
+  p.addBindValue(nn(item.dataDir));
+  p.addBindValue(nn(item.fingerprintMode));
+  p.addBindValue(nn(item.language));
+  p.addBindValue(nn(item.userAgent));
+  p.addBindValue(nn(item.platform));
+  p.addBindValue(item.hardwareConcurrency);
+  p.addBindValue(item.deviceMemoryGb);
+  p.addBindValue(item.deviceScaleFactor);
+  p.addBindValue(nn(item.timezone));
+  p.addBindValue(nn(item.resolution));
   p.addBindValue(b(item.touchEnabled));
+  p.addBindValue(b(item.geoEnabled));
+  p.addBindValue(item.geoLatitude);
+  p.addBindValue(item.geoLongitude);
+  p.addBindValue(item.geoAccuracy);
 
   if (!p.exec()) {
     db.rollback();
@@ -384,11 +485,11 @@ bool ProfileRepository::upsert(const ProfileListModel::ProfileItem& item, QStrin
       "username=excluded.username, password=excluded.password"));
   pc.addBindValue(item.id);
   pc.addBindValue(b(item.proxyEnabled));
-  pc.addBindValue(item.proxyType);
-  pc.addBindValue(item.proxyHost);
+  pc.addBindValue(nn(item.proxyType));
+  pc.addBindValue(nn(item.proxyHost));
   pc.addBindValue(item.proxyPort);
-  pc.addBindValue(item.proxyUsername);
-  pc.addBindValue(item.proxyPassword);
+  pc.addBindValue(nn(item.proxyUsername));
+  pc.addBindValue(nn(item.proxyPassword));
 
   if (!pc.exec()) {
     db.rollback();
@@ -409,13 +510,13 @@ bool ProfileRepository::upsert(const ProfileListModel::ProfileItem& item, QStrin
       "socks_password=excluded.socks_password"));
   vc.addBindValue(item.id);
   vc.addBindValue(b(item.vpnEnabled));
-  vc.addBindValue(item.openvpnExe);
-  vc.addBindValue(item.openvpnConfig);
+  vc.addBindValue(nn(item.openvpnExe));
+  vc.addBindValue(nn(item.openvpnConfig));
   vc.addBindValue(b(item.openvpnUseSocks));
-  vc.addBindValue(item.openvpnSocksHost);
+  vc.addBindValue(nn(item.openvpnSocksHost));
   vc.addBindValue(item.openvpnSocksPort);
-  vc.addBindValue(item.openvpnSocksUsername);
-  vc.addBindValue(item.openvpnSocksPassword);
+  vc.addBindValue(nn(item.openvpnSocksUsername));
+  vc.addBindValue(nn(item.openvpnSocksPassword));
 
   if (!vc.exec()) {
     db.rollback();

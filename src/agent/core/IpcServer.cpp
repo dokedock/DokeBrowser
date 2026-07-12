@@ -1,5 +1,7 @@
 #include "IpcServer.h"
 
+#include "CdpClient.h"
+#include "HttpProxyMapper.h"
 #include "shared/ipc/FramedJsonSocket.h"
 #include "shared/ipc/IpcNames.h"
 
@@ -15,12 +17,16 @@
 #include <QNetworkRequest>
 #include <QPointer>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QStandardPaths>
 #include <QTemporaryFile>
 #include <QTimer>
 #include <QUrl>
+#include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
+#include <QHostAddress>
+#include <QTcpServer>
 #include <functional>
 #include <memory>
 
@@ -39,12 +45,38 @@ IpcServer::~IpcServer() {
     }
   }
 
+  const auto cdpKeys = m_cdpByProfileId.keys();
+  for (const auto& k : cdpKeys) {
+    CdpClient* c = m_cdpByProfileId.take(k);
+    if (c) {
+      c->stop();
+      c->deleteLater();
+    }
+  }
+
+  const auto mapKeys = m_proxyMapperByProfileId.keys();
+  for (const auto& k : mapKeys) {
+    HttpProxyMapper* m = m_proxyMapperByProfileId.take(k);
+    if (m) {
+      m->stop();
+      m->deleteLater();
+    }
+  }
+
   const auto keys = m_openvpnByProfileId.keys();
   for (const auto& k : keys) {
     QProcess* p = m_openvpnByProfileId.take(k);
     if (p) {
       p->kill();
       p->deleteLater();
+    }
+  }
+
+  const auto extKeys = m_chromeProxyAuthExtDirByProfileId.keys();
+  for (const auto& k : extKeys) {
+    const QString dir = m_chromeProxyAuthExtDirByProfileId.take(k);
+    if (!dir.isEmpty()) {
+      QDir(dir).removeRecursively();
     }
   }
 
@@ -118,7 +150,26 @@ void IpcServer::onPeerJson(const QJsonObject& obj) {
     const QString profileId = obj.value(QStringLiteral("profile_id")).toString().trimmed();
     const QString profileName = obj.value(QStringLiteral("profile_name")).toString();
     const QString dataDirFromMsg = obj.value(QStringLiteral("data_dir")).toString();
+    const QString fingerprintMode = obj.value(QStringLiteral("fingerprint_mode")).toString().trimmed();
+    const QString language = obj.value(QStringLiteral("language")).toString().trimmed();
+    const QString userAgent = obj.value(QStringLiteral("user_agent")).toString().trimmed();
+    const QString platform = obj.value(QStringLiteral("platform")).toString().trimmed();
+    const int hardwareConcurrency = obj.value(QStringLiteral("hardware_concurrency")).toInt(0);
+    const int deviceMemoryGb = obj.value(QStringLiteral("device_memory_gb")).toInt(0);
+    const double deviceScaleFactor = obj.value(QStringLiteral("device_scale_factor")).toDouble(0);
+    const QString timezone = obj.value(QStringLiteral("timezone")).toString().trimmed();
+    const QString resolution = obj.value(QStringLiteral("resolution")).toString().trimmed();
+    const bool touchEnabled = obj.value(QStringLiteral("touch_enabled")).toBool(false);
+    const bool geoEnabled = obj.value(QStringLiteral("geo_enabled")).toBool(false);
+    const double geoLatitude = obj.value(QStringLiteral("geo_latitude")).toDouble(0);
+    const double geoLongitude = obj.value(QStringLiteral("geo_longitude")).toDouble(0);
+    const double geoAccuracy = obj.value(QStringLiteral("geo_accuracy")).toDouble(0);
     const QJsonObject proxyObj = obj.value(QStringLiteral("proxy")).toObject();
+    const bool chromeCompatRequested = obj.value(QStringLiteral("chrome_compat")).toBool(false);
+    bool chromeCompat = chromeCompatRequested;
+    if (!chromeCompatRequested && qEnvironmentVariableIsSet("TRAE_SANDBOX_STORAGE_PATH")) {
+      chromeCompat = true;
+    }
 
     auto sendStatus = [this, profileId](const QString& status, const QString& error) {
       if (!m_peer) {
@@ -214,7 +265,486 @@ void IpcServer::onPeerJson(const QJsonObject& obj) {
       return QDir(base).filePath(QStringLiteral("profiles/%1/chrome").arg(profileId));
     };
 
-    auto buildProxyArg = [proxyObj]() -> QString {
+    auto sanitizeKey = [](const QString& s) -> QString {
+      QString out;
+      out.reserve(s.size());
+      for (const auto& ch : s) {
+        if ((ch >= QLatin1Char('a') && ch <= QLatin1Char('z')) || (ch >= QLatin1Char('A') && ch <= QLatin1Char('Z'))
+            || (ch >= QLatin1Char('0') && ch <= QLatin1Char('9')) || ch == QLatin1Char('_') || ch == QLatin1Char('-')) {
+          out.push_back(ch);
+        } else {
+          out.push_back(QLatin1Char('_'));
+        }
+      }
+      if (out.isEmpty()) {
+        out = QStringLiteral("p");
+      }
+      return out;
+    };
+
+    auto jsEscape = [](const QString& s) -> QString {
+      QString out;
+      out.reserve(s.size() + 8);
+      for (const auto& ch : s) {
+        if (ch == QLatin1Char('\\')) {
+          out += QStringLiteral("\\\\");
+        } else if (ch == QLatin1Char('"')) {
+          out += QStringLiteral("\\\"");
+        } else if (ch == QLatin1Char('\n')) {
+          out += QStringLiteral("\\n");
+        } else if (ch == QLatin1Char('\r')) {
+          out += QStringLiteral("\\r");
+        } else if (ch == QLatin1Char('\t')) {
+          out += QStringLiteral("\\t");
+        } else {
+          out += ch;
+        }
+      }
+      return out;
+    };
+
+    auto cleanupProxyAuthExt = [this](const QString& pid) {
+      const QString dir = m_chromeProxyAuthExtDirByProfileId.take(pid);
+      if (!dir.isEmpty()) {
+        QDir(dir).removeRecursively();
+      }
+    };
+
+    auto cleanupProxyMapping = [this](const QString& pid) {
+      HttpProxyMapper* m = m_proxyMapperByProfileId.take(pid);
+      if (m) {
+        m->stop();
+        m->deleteLater();
+      }
+    };
+
+    auto cleanupCdp = [this](const QString& pid) {
+      CdpClient* c = m_cdpByProfileId.take(pid);
+      if (c) {
+        c->stop();
+        c->deleteLater();
+      }
+    };
+
+    const quint32 fpSeed = qHash(profileId);
+
+    auto createChromeExt =
+        [this, profileId, fpSeed, sanitizeKey, jsEscape, fingerprintMode, language, userAgent, platform, hardwareConcurrency,
+         deviceMemoryGb, deviceScaleFactor, timezone, resolution, touchEnabled, geoEnabled, geoLatitude, geoLongitude, geoAccuracy](
+            const QString& scheme, const QString& host, int port, const QString& username, const QString& password,
+            bool enableProxyAuth) -> QString {
+      const QString base = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+      if (base.isEmpty()) {
+        return {};
+      }
+      const QString dir = QDir(base).filePath(
+          QStringLiteral("dokebrowser_ext/%1_%2").arg(sanitizeKey(profileId), QString::number(QDateTime::currentMSecsSinceEpoch())));
+      if (!QDir().mkpath(dir)) {
+        return {};
+      }
+
+      QFile mf(QDir(dir).filePath(QStringLiteral("manifest.json")));
+      if (!mf.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        QDir(dir).removeRecursively();
+        return {};
+      }
+      QByteArray manifest;
+      if (enableProxyAuth) {
+        manifest = QByteArrayLiteral(
+            "{\"name\":\"Doke Profile\",\"version\":\"1.0.0\",\"manifest_version\":3,"
+            "\"permissions\":[\"proxy\",\"storage\",\"tabs\",\"webRequest\",\"webRequestAuthProvider\"],"
+            "\"host_permissions\":[\"<all_urls>\"],"
+            "\"background\":{\"service_worker\":\"background.js\"},"
+            "\"content_scripts\":[{\"matches\":[\"<all_urls>\"],\"js\":[\"inject.js\",\"content.js\"],\"run_at\":\"document_start\",\"world\":\"MAIN\"}],"
+            "\"web_accessible_resources\":[{\"resources\":[\"inject.js\"],\"matches\":[\"<all_urls>\"]}]"
+            "}");
+      } else {
+        manifest = QByteArrayLiteral(
+            "{\"name\":\"Doke Profile\",\"version\":\"1.0.0\",\"manifest_version\":3,"
+            "\"permissions\":[\"storage\",\"tabs\"],"
+            "\"host_permissions\":[\"<all_urls>\"],"
+            "\"background\":{\"service_worker\":\"background.js\"},"
+            "\"content_scripts\":[{\"matches\":[\"<all_urls>\"],\"js\":[\"inject.js\",\"content.js\"],\"run_at\":\"document_start\",\"world\":\"MAIN\"}],"
+            "\"web_accessible_resources\":[{\"resources\":[\"inject.js\"],\"matches\":[\"<all_urls>\"]}]"
+            "}");
+      }
+      mf.write(manifest);
+      mf.close();
+      QFile::setPermissions(mf.fileName(), QFile::ReadOwner | QFile::WriteOwner);
+
+      QFile bg(QDir(dir).filePath(QStringLiteral("background.js")));
+      if (!bg.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        QDir(dir).removeRecursively();
+        return {};
+      }
+      QString bgJs;
+      if (enableProxyAuth) {
+        bgJs = QStringLiteral(
+                   "const openCheck=()=>{try{chrome.tabs.create({url:chrome.runtime.getURL('check.html')});}catch(e){}};"
+                   "const applyProxy=()=>{"
+                   "const config={mode:\"fixed_servers\",rules:{singleProxy:{scheme:\"%1\",host:\"%2\",port:parseInt(%3)},bypassList:[\"localhost\",\"127.0.0.1\"]}};"
+                   "chrome.proxy.settings.set({value:config,scope:\"regular\"},()=>{});"
+                   "};"
+                   "chrome.runtime.onInstalled.addListener(()=>{applyProxy();openCheck();});"
+                   "chrome.runtime.onStartup.addListener(()=>{applyProxy();});"
+                   "chrome.webRequest.onAuthRequired.addListener((details)=>{"
+                   "if(!details||!details.isProxy){return {};}"
+                   "return {authCredentials:{username:\"%4\",password:\"%5\"}};"
+                   "},{urls:[\"<all_urls>\"]},[\"blocking\"]);")
+                   .arg(jsEscape(scheme), jsEscape(host), QString::number(port), jsEscape(username), jsEscape(password));
+      } else {
+        bgJs = QStringLiteral(
+            "const openCheck=()=>{try{chrome.tabs.create({url:chrome.runtime.getURL('check.html')});}catch(e){}};"
+            "chrome.runtime.onInstalled.addListener(()=>{openCheck();});");
+      }
+      bg.write(bgJs.toUtf8());
+      bg.close();
+      QFile::setPermissions(bg.fileName(), QFile::ReadOwner | QFile::WriteOwner);
+
+      QFile content(QDir(dir).filePath(QStringLiteral("content.js")));
+      if (!content.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        QDir(dir).removeRecursively();
+        return {};
+      }
+      const QString contentJs = QStringLiteral(
+                                    "(function(){try{"
+                                    "const root=(document.documentElement||document.documentElement||document.body);"
+                                    "if(root){"
+                                    "root.dataset.dokeInjected='1';"
+                                    "root.dataset.dokeMode=\"%5\";"
+                                    "root.dataset.dokeLang=\"%1\";"
+                                    "root.dataset.dokeTz=\"%2\";"
+                                    "root.dataset.dokeTouch=\"%3\";"
+                                    "root.dataset.dokeRes=\"%4\";"
+                                    "root.dataset.dokePlat=\"%6\";"
+                                    "}"
+                                    "}catch(e){}})();")
+                                    .arg(jsEscape(language.trimmed()), jsEscape(timezone.trimmed()),
+                                         touchEnabled ? QStringLiteral("1") : QStringLiteral("0"), jsEscape(resolution.trimmed()),
+                                         jsEscape(fingerprintMode.trimmed()), jsEscape(platform.trimmed()));
+      content.write(contentJs.toUtf8());
+      content.close();
+      QFile::setPermissions(content.fileName(), QFile::ReadOwner | QFile::WriteOwner);
+
+      QFile inject(QDir(dir).filePath(QStringLiteral("inject.js")));
+      if (!inject.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        QDir(dir).removeRecursively();
+        return {};
+      }
+
+      QString inj;
+      const QString lang = language.trimmed();
+      const QString tz = timezone.trimmed();
+      const QString plat = platform.trimmed();
+      int resW = 0;
+      int resH = 0;
+      if (!resolution.trimmed().isEmpty()) {
+        const auto parts = resolution.trimmed().split('x');
+        if (parts.size() == 2) {
+          bool okW = false;
+          bool okH = false;
+          resW = parts.at(0).trimmed().toInt(&okW);
+          resH = parts.at(1).trimmed().toInt(&okH);
+          if (!okW || !okH) {
+            resW = 0;
+            resH = 0;
+          }
+        }
+      }
+      const double dpr = deviceScaleFactor > 0 ? deviceScaleFactor : 0;
+      if (!lang.isEmpty()) {
+        const QString primary = lang.contains('-') ? lang.left(lang.indexOf('-')) : lang;
+        const QString langs = (primary.isEmpty() || primary == lang) ? QStringLiteral("['%1']").arg(jsEscape(lang))
+                                                                     : QStringLiteral("['%1','%2']").arg(jsEscape(lang), jsEscape(primary));
+        inj += QStringLiteral(
+                   "(function(){try{"
+                   "const define=(obj,key,getter)=>{try{Object.defineProperty(obj,key,{get:getter,configurable:true});}catch(e){}};"
+                   "define(Navigator.prototype,'language',()=>\"%1\");"
+                   "define(navigator,'language',()=>\"%1\");"
+                   "define(Navigator.prototype,'languages',()=>%2);"
+                   "define(navigator,'languages',()=>%2);"
+                   "}catch(e){}})();")
+                   .arg(jsEscape(lang), langs);
+      }
+      if (!tz.isEmpty()) {
+        inj += QStringLiteral(
+                   "(function(){try{"
+                   "const tz=\"%1\";"
+                   "try{"
+                   "const Original=Intl.DateTimeFormat;"
+                   "Intl.DateTimeFormat=function(){"
+                   "const dtf=new Original(...arguments);"
+                   "const ro=dtf.resolvedOptions?dtf.resolvedOptions.bind(dtf):null;"
+                   "if(ro){dtf.resolvedOptions=function(){const o=ro();try{o.timeZone=tz;}catch(e){}return o;};}"
+                   "return dtf;"
+                   "};"
+                   "Intl.DateTimeFormat.prototype=Original.prototype;"
+                   "}catch(e){}"
+                   "}catch(e){}})();")
+                   .arg(jsEscape(tz));
+      }
+      inj += QStringLiteral(
+          "(function(){try{"
+          "try{Object.defineProperty(Navigator.prototype,'webdriver',{get:()=>undefined,configurable:true});}catch(e){}"
+          "try{Object.defineProperty(navigator,'webdriver',{get:()=>undefined,configurable:true});}catch(e){}"
+          "}catch(e){}})();");
+
+      inj += QStringLiteral(
+          "(function(){try{"
+          "const RTCP=window.RTCPeerConnection||window.webkitRTCPeerConnection;"
+          "if(!RTCP){return;}"
+          "const proto=RTCP.prototype;"
+          "const wrap=(fn)=>function(ev){"
+          "try{"
+          "if(ev&&ev.candidate&&ev.candidate.candidate){"
+          "const s=String(ev.candidate.candidate||'');"
+          "if(/\\btyp\\s+(host|srflx)\\b/i.test(s)){return;}"
+          "}"
+          "}catch(e){}"
+          "return fn.call(this,ev);"
+          "};"
+          "try{"
+          "const orig=proto.addEventListener;"
+          "if(orig){"
+          "proto.addEventListener=function(t,fn,opt){"
+          "if(t==='icecandidate'&&typeof fn==='function'){return orig.call(this,t,wrap(fn),opt);}"
+          "return orig.call(this,t,fn,opt);"
+          "};"
+          "}"
+          "}catch(e){}"
+          "try{"
+          "let h=null;"
+          "Object.defineProperty(proto,'onicecandidate',{"
+          "configurable:true,enumerable:true,"
+          "get(){return h;},"
+          "set(fn){h=(typeof fn==='function')?wrap(fn):fn;}"
+          "});"
+          "}catch(e){}"
+          "}catch(e){}})();");
+
+      inj += QStringLiteral(
+                 "(function(){try{"
+                 "const seed=(%1>>>0);"
+                 "function mulberry32(a){return function(){var t=a+=0x6D2B79F5;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return ((t^t>>>14)>>>0)/4294967296;};}"
+                 "const rnd=mulberry32(seed);"
+                 "const sgn=()=>rnd()<0.5?-1:1;"
+                 "try{"
+                 "const P=window.CanvasRenderingContext2D&&CanvasRenderingContext2D.prototype;"
+                 "if(P&&P.getImageData){"
+                 "const orig=P.getImageData;"
+                 "P.getImageData=function(){"
+                 "const d=orig.apply(this,arguments);"
+                 "try{"
+                 "const n=Math.min(10,Math.floor(d.data.length/4));"
+                 "for(let i=0;i<n;i++){"
+                 "const p=(Math.floor(rnd()*(d.data.length/4))|0)*4;"
+                 "d.data[p]=(d.data[p]+sgn())&255;"
+                 "}"
+                 "}catch(e){}"
+                 "return d;"
+                 "};"
+                 "}"
+                 "}catch(e){}"
+                 "try{"
+                 "const patchGL=(GL)=>{if(!GL||!GL.prototype){return;}const proto=GL.prototype;"
+                 "if(proto.readPixels){const orig=proto.readPixels;"
+                 "proto.readPixels=function(){orig.apply(this,arguments);try{const a=arguments[6];if(a&&a.length){a[0]=(a[0]+1)&255;}}catch(e){}};}"
+                 "};"
+                 "patchGL(window.WebGLRenderingContext);"
+                 "patchGL(window.WebGL2RenderingContext);"
+                 "}catch(e){}"
+                 "try{"
+                 "const AB=window.AudioBuffer&&AudioBuffer.prototype;"
+                 "if(AB&&AB.getChannelData){const orig=AB.getChannelData;"
+                 "AB.getChannelData=function(){"
+                 "const a=orig.apply(this,arguments);"
+                 "try{"
+                 "const out=new Float32Array(a.length);out.set(a);"
+                 "const n=Math.min(20,out.length);"
+                 "for(let i=0;i<n;i++){const p=(Math.floor(rnd()*out.length)|0);out[p]=out[p]+(sgn()*1e-7);}return out;"
+                 "}catch(e){}"
+                 "return a;"
+                 "};}"
+                 "}catch(e){}"
+                 "}catch(e){}})();")
+                 .arg(QString::number(fpSeed));
+
+      if (!plat.isEmpty()) {
+        inj += QStringLiteral(
+                   "(function(){try{"
+                   "const v=\"%1\";"
+                   "try{Object.defineProperty(Navigator.prototype,'platform',{get:()=>v,configurable:true});}catch(e){}"
+                   "try{Object.defineProperty(navigator,'platform',{get:()=>v,configurable:true});}catch(e){}"
+                   "}catch(e){}})();")
+                   .arg(jsEscape(plat));
+      }
+      if (hardwareConcurrency > 0) {
+        inj += QStringLiteral(
+                   "(function(){try{"
+                   "const v=%1;"
+                   "try{Object.defineProperty(Navigator.prototype,'hardwareConcurrency',{get:()=>v,configurable:true});}catch(e){}"
+                   "try{Object.defineProperty(navigator,'hardwareConcurrency',{get:()=>v,configurable:true});}catch(e){}"
+                   "}catch(e){}})();")
+                   .arg(QString::number(hardwareConcurrency));
+      }
+      if (deviceMemoryGb > 0) {
+        inj += QStringLiteral(
+                   "(function(){try{"
+                   "const v=%1;"
+                   "try{Object.defineProperty(Navigator.prototype,'deviceMemory',{get:()=>v,configurable:true});}catch(e){}"
+                   "try{Object.defineProperty(navigator,'deviceMemory',{get:()=>v,configurable:true});}catch(e){}"
+                   "}catch(e){}})();")
+                   .arg(QString::number(deviceMemoryGb));
+      }
+      if (resW > 0 && resH > 0) {
+        inj += QStringLiteral(
+                   "(function(){try{"
+                   "const w=%1;const h=%2;"
+                   "try{const S=(window.Screen&&Screen.prototype)?Screen.prototype:null;"
+                   "if(S){"
+                   "const def=(k,v)=>{try{Object.defineProperty(S,k,{get:()=>v,configurable:true});}catch(e){}};"
+                   "def('width',w);def('height',h);def('availWidth',w);def('availHeight',h);"
+                   "}"
+                   "}catch(e){}"
+                   "}catch(e){}})();")
+                   .arg(QString::number(resW), QString::number(resH));
+      }
+      if (dpr > 0) {
+        inj += QStringLiteral(
+                   "(function(){try{"
+                   "const v=%1;"
+                   "try{Object.defineProperty(window,'devicePixelRatio',{get:()=>v,configurable:true});}catch(e){}"
+                   "}catch(e){}})();")
+                   .arg(QString::number(dpr, 'f', 2));
+      }
+      if (touchEnabled) {
+        inj += QStringLiteral(
+            "try{Object.defineProperty(navigator,'maxTouchPoints',{get:()=>5,configurable:true});}catch(e){}"
+            "try{Object.defineProperty(navigator,'msMaxTouchPoints',{get:()=>5,configurable:true});}catch(e){}"
+            "try{if(!('ontouchstart'in window)){Object.defineProperty(window,'ontouchstart',{value:null,configurable:true,writable:true});}}catch(e){}");
+      }
+      if (geoEnabled) {
+        inj += QStringLiteral(
+                   "(function(){try{"
+                   "const lat=%1;const lon=%2;const acc=%3;"
+                   "const geo=navigator.geolocation;"
+                   "if(!geo){return;}"
+                   "const makePos=()=>({coords:{latitude:lat,longitude:lon,accuracy:acc,altitude:null,altitudeAccuracy:null,heading:null,speed:null},timestamp:Date.now()});"
+                   "try{geo.getCurrentPosition=function(s,e,o){try{s&&s(makePos());}catch(err){try{e&&e(err);}catch(_){} }};}catch(e){}"
+                   "try{geo.watchPosition=function(s,e,o){const id=Math.floor(Math.random()*1e9);try{s&&s(makePos());}catch(err){try{e&&e(err);}catch(_){} } return id;};}catch(e){}"
+                   "try{geo.clearWatch=function(id){};}catch(e){}"
+                   "}catch(e){}})();")
+                   .arg(QString::number(geoLatitude, 'f', 6), QString::number(geoLongitude, 'f', 6),
+                        QString::number(geoAccuracy > 0 ? geoAccuracy : 1000, 'f', 0));
+      }
+      const QString geoObj =
+          geoEnabled ? QStringLiteral("{enabled:true,lat:%1,lon:%2,acc:%3}")
+                           .arg(QString::number(geoLatitude, 'f', 6), QString::number(geoLongitude, 'f', 6),
+                                QString::number(geoAccuracy > 0 ? geoAccuracy : 1000, 'f', 0))
+                     : QStringLiteral("{enabled:false}");
+      inj += QStringLiteral(
+                 "try{window.__DOKE_INJECTED={v:3,seed:%10,mode:\"%4\",lang:\"%1\",tz:\"%2\",plat:\"%5\",hc:%6,mem:%7,dpr:%8,res:\"%9\",touch:%3,geo:%11,ts:Date.now()};}catch(e){}")
+                 .arg(jsEscape(lang))
+                 .arg(jsEscape(tz))
+                 .arg(touchEnabled ? QStringLiteral("true") : QStringLiteral("false"))
+                 .arg(jsEscape(fingerprintMode.trimmed()))
+                 .arg(jsEscape(plat))
+                 .arg(QString::number(hardwareConcurrency))
+                 .arg(QString::number(deviceMemoryGb))
+                 .arg(QString::number(dpr, 'f', 2))
+                 .arg(jsEscape(resolution.trimmed()))
+                 .arg(QString::number(fpSeed))
+                 .arg(geoObj);
+      if (inj.isEmpty()) {
+        inj = QStringLiteral(";");
+      }
+      inject.write(inj.toUtf8());
+      inject.close();
+      QFile::setPermissions(inject.fileName(), QFile::ReadOwner | QFile::WriteOwner);
+
+      QFile checkHtml(QDir(dir).filePath(QStringLiteral("check.html")));
+      if (!checkHtml.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        QDir(dir).removeRecursively();
+        return {};
+      }
+      checkHtml.write(QByteArrayLiteral(
+          "<!doctype html><html><head><meta charset=\"utf-8\"><title>Doke 注入自检</title>"
+          "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+          "<style>body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;padding:16px;}"
+          ".k{color:#666;width:180px;display:inline-block;}pre{background:#f6f8fa;padding:12px;border-radius:8px;overflow:auto;}"
+          "</style></head><body><h2>Doke 注入自检</h2>"
+          "<p>这个页面会在扩展上下文直接运行同一份 inject.js，并展示关键指纹字段。</p>"
+          "<div id=\"rows\"></div><h3>Raw</h3><pre id=\"raw\"></pre>"
+          "<script src=\"inject.js\"></script><script src=\"check.js\"></script></body></html>"));
+      checkHtml.close();
+      QFile::setPermissions(checkHtml.fileName(), QFile::ReadOwner | QFile::WriteOwner);
+
+      QFile checkJs(QDir(dir).filePath(QStringLiteral("check.js")));
+      if (!checkJs.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        QDir(dir).removeRecursively();
+        return {};
+      }
+      checkJs.write(QByteArrayLiteral(
+          "(function(){\n"
+          "  const rows=document.getElementById('rows');\n"
+          "  const add=(k,v)=>{const d=document.createElement('div');d.innerHTML='<span class=\"k\">'+k+':</span> '+String(v);rows.appendChild(d);};\n"
+          "  let tz='';\n"
+          "  try{tz=Intl.DateTimeFormat().resolvedOptions().timeZone||'';}catch(e){}\n"
+          "  add('navigator.userAgent', navigator.userAgent);\n"
+          "  add('navigator.language', navigator.language);\n"
+          "  add('navigator.languages', JSON.stringify(navigator.languages));\n"
+          "  add('navigator.platform', navigator.platform);\n"
+          "  add('navigator.hardwareConcurrency', navigator.hardwareConcurrency);\n"
+          "  add('navigator.deviceMemory', navigator.deviceMemory);\n"
+          "  add('devicePixelRatio', window.devicePixelRatio);\n"
+          "  add('screen', (window.screen? (screen.width+'x'+screen.height) : ''));\n"
+          "  add('Intl tz', tz);\n"
+          "  add('navigator.webdriver', navigator.webdriver);\n"
+          "  add('navigator.maxTouchPoints', navigator.maxTouchPoints);\n"
+          "  add('ontouchstart in window', ('ontouchstart' in window));\n"
+          "  add('__DOKE_INJECTED', window.__DOKE_INJECTED ? JSON.stringify(window.__DOKE_INJECTED) : '');\n"
+          "  const raw={\n"
+          "    userAgent:navigator.userAgent,\n"
+          "    language:navigator.language,\n"
+          "    languages:navigator.languages,\n"
+          "    platform:navigator.platform,\n"
+          "    hardwareConcurrency:navigator.hardwareConcurrency,\n"
+          "    deviceMemory:navigator.deviceMemory,\n"
+          "    devicePixelRatio:window.devicePixelRatio,\n"
+          "    screen: window.screen? {w:screen.width,h:screen.height,aw:screen.availWidth,ah:screen.availHeight}:null,\n"
+          "    tz,\n"
+          "    webdriver:navigator.webdriver,\n"
+          "    maxTouchPoints:navigator.maxTouchPoints,\n"
+          "    ontouchstart:('ontouchstart' in window),\n"
+          "    marker:window.__DOKE_INJECTED||null\n"
+          "  };\n"
+          "  document.getElementById('raw').textContent=JSON.stringify(raw,null,2);\n"
+          "})();\n"));
+      checkJs.close();
+      QFile::setPermissions(checkJs.fileName(), QFile::ReadOwner | QFile::WriteOwner);
+
+      m_chromeProxyAuthExtDirByProfileId.insert(profileId, dir);
+      return dir;
+    };
+
+    QString proxyScheme;
+    QString proxyHost;
+    int proxyPort = 0;
+    QString proxyUsername;
+    QString proxyPassword;
+    bool enableProxyAuth = false;
+
+    auto buildProxyArg = [this, proxyObj, &proxyScheme, &proxyHost, &proxyPort, &proxyUsername, &proxyPassword, &enableProxyAuth,
+                          cleanupProxyAuthExt, cleanupProxyMapping, profileId]() -> QString {
+      cleanupProxyAuthExt(profileId);
+      cleanupProxyMapping(profileId);
+      enableProxyAuth = false;
+      proxyScheme.clear();
+      proxyHost.clear();
+      proxyPort = 0;
+      proxyUsername.clear();
+      proxyPassword.clear();
+
       const bool enabled = proxyObj.value(QStringLiteral("enabled")).toBool(false);
       if (!enabled) {
         return {};
@@ -222,13 +752,55 @@ void IpcServer::onPeerJson(const QJsonObject& obj) {
       const QString type = proxyObj.value(QStringLiteral("type")).toString().trimmed().toLower();
       const QString host = proxyObj.value(QStringLiteral("host")).toString().trimmed();
       const int port = proxyObj.value(QStringLiteral("port")).toInt(0);
+      const QString username = proxyObj.value(QStringLiteral("username")).toString();
+      const QString password = proxyObj.value(QStringLiteral("password")).toString();
+      const bool hasAuth = !username.isEmpty() || !password.isEmpty();
+
       if (type.isEmpty() || type == QStringLiteral("direct")) {
         return {};
       }
       if (host.isEmpty() || port <= 0) {
         return {};
       }
-      const QString scheme = (type == QStringLiteral("socks5")) ? QStringLiteral("socks5") : QStringLiteral("http");
+
+      QString scheme = QStringLiteral("http");
+      if (type == QStringLiteral("socks5")) {
+        scheme = QStringLiteral("socks5");
+      } else if (type == QStringLiteral("https")) {
+        scheme = QStringLiteral("https");
+      }
+
+      if (scheme == QStringLiteral("socks5") && hasAuth) {
+        const QString u = QString::fromUtf8(QUrl::toPercentEncoding(username));
+        const QString p = QString::fromUtf8(QUrl::toPercentEncoding(password));
+        return QStringLiteral("--proxy-server=socks5://%1:%2@%3:%4").arg(u, p, host, QString::number(port));
+      }
+
+      proxyScheme = scheme;
+      proxyHost = host;
+      proxyPort = port;
+      proxyUsername = username;
+      proxyPassword = password;
+      enableProxyAuth = hasAuth;
+
+      if (hasAuth && (scheme == QStringLiteral("http") || scheme == QStringLiteral("https"))) {
+        HttpProxyMapper::Upstream u;
+        u.scheme = scheme;
+        u.host = host;
+        u.port = port;
+        u.username = username;
+        u.password = password;
+        auto* mapper = new HttpProxyMapper(u, this);
+        QString err;
+        if (!mapper->start(&err)) {
+          mapper->deleteLater();
+          return QStringLiteral("--proxy-server=%1://%2:%3").arg(scheme, host, QString::number(port));
+        }
+        m_proxyMapperByProfileId.insert(profileId, mapper);
+        enableProxyAuth = false;
+        return QStringLiteral("--proxy-server=http://127.0.0.1:%1").arg(QString::number(mapper->localPort()));
+      }
+
       return QStringLiteral("--proxy-server=%1://%2:%3").arg(scheme, host, QString::number(port));
     };
 
@@ -273,22 +845,6 @@ void IpcServer::onPeerJson(const QJsonObject& obj) {
     }
 
     QProcess* p = new QProcess(this);
-    QObject::connect(p, &QProcess::started, this, [sendStatus]() { sendStatus(QStringLiteral("running"), QString()); });
-    QObject::connect(p, &QProcess::finished, this, [this, profileId, sendStatus](int exitCode, QProcess::ExitStatus st) {
-      m_profileProcByProfileId.remove(profileId);
-      const bool expectedStop = m_profileStopRequested.remove(profileId);
-      if (expectedStop) {
-        sendStatus(QStringLiteral("stopped"), QString());
-        return;
-      }
-      if (st == QProcess::CrashExit) {
-        sendStatus(QStringLiteral("crashed"), QStringLiteral("crash_exit"));
-      } else if (exitCode == 0) {
-        sendStatus(QStringLiteral("stopped"), QString());
-      } else {
-        sendStatus(QStringLiteral("crashed"), QStringLiteral("exit_code_%1").arg(exitCode));
-      }
-    });
     QObject::connect(p, &QProcess::readyReadStandardOutput, this, [this, p, profileId]() {
       if (!m_peer) {
         return;
@@ -330,6 +886,9 @@ void IpcServer::onPeerJson(const QJsonObject& obj) {
 
     m_profileProcByProfileId.insert(profileId, p);
     sendStatus(QStringLiteral("starting"), QString());
+    p->setProperty("compat_requested", chromeCompatRequested);
+    p->setProperty("compat_tried", chromeCompat);
+    p->setProperty("compat_retried", false);
 
     const QString chromeExe = resolveChrome();
     if (chromeExe.isEmpty()) {
@@ -348,34 +907,264 @@ void IpcServer::onPeerJson(const QJsonObject& obj) {
     }
     QDir().mkpath(userDataDir);
 
-    QStringList args;
-    args << QStringLiteral("--user-data-dir=%1").arg(userDataDir);
-    args << QStringLiteral("--no-first-run");
-    args << QStringLiteral("--no-default-browser-check");
-    args << QStringLiteral("--disable-sync");
-    args << QStringLiteral("--new-window");
-    if (qEnvironmentVariableIntValue("DOKEBROWSER_CHROME_COMPAT") == 1) {
-      args << QStringLiteral("--no-sandbox");
-      args << QStringLiteral("--disable-gpu");
-      args << QStringLiteral("--disable-software-rasterizer");
-      args << QStringLiteral("--disable-dev-shm-usage");
-    }
-
+    cleanupCdp(profileId);
     const QString proxyArg = buildProxyArg();
-    if (!proxyArg.isEmpty()) {
-      args << proxyArg;
+    QString chromeExtDir;
+    const bool needInject = !language.isEmpty() || !userAgent.isEmpty() || !platform.isEmpty() || hardwareConcurrency > 0 ||
+                            deviceMemoryGb > 0 || deviceScaleFactor > 0 || !timezone.isEmpty() || touchEnabled || geoEnabled;
+    const bool cdpEnabled = needInject;
+    if (needInject || enableProxyAuth) {
+      chromeExtDir = createChromeExt(proxyScheme, proxyHost, proxyPort, proxyUsername, proxyPassword, enableProxyAuth);
+    }
+    const QString url = obj.value(QStringLiteral("url")).toString().trimmed();
+
+    auto allocateDebugPort = []() -> int {
+      QTcpServer s;
+      if (!s.listen(QHostAddress::LocalHost, 0)) {
+        return 0;
+      }
+      const int port = static_cast<int>(s.serverPort());
+      s.close();
+      return port;
+    };
+    const int debugPort = cdpEnabled ? allocateDebugPort() : 0;
+
+    int winW = 0;
+    int winH = 0;
+    if (!resolution.isEmpty()) {
+      const auto parts = resolution.split('x');
+      if (parts.size() == 2) {
+        bool okW = false;
+        bool okH = false;
+        winW = parts.at(0).trimmed().toInt(&okW);
+        winH = parts.at(1).trimmed().toInt(&okH);
+        if (!okW || !okH) {
+          winW = 0;
+          winH = 0;
+        }
+      }
     }
 
-    const QString url = obj.value(QStringLiteral("url")).toString().trimmed();
-    if (!url.isEmpty()) {
-      args << url;
-    } else {
-      args << QStringLiteral("about:blank");
+    const QString windowSizeArg =
+        (winW > 0 && winH > 0) ? QStringLiteral("--window-size=%1,%2").arg(QString::number(winW), QString::number(winH))
+                               : QString();
+
+    auto buildArgs =
+        [userDataDir, proxyArg, chromeExtDir, url, language, userAgent, timezone, windowSizeArg, touchEnabled, debugPort](bool compat)
+            -> QStringList {
+      QStringList args;
+      args << QStringLiteral("--user-data-dir=%1").arg(userDataDir);
+      args << QStringLiteral("--no-first-run");
+      args << QStringLiteral("--no-default-browser-check");
+      args << QStringLiteral("--disable-sync");
+      args << QStringLiteral("--new-window");
+      args << QStringLiteral("--disable-session-crashed-bubble");
+      args << QStringLiteral("--force-webrtc-ip-handling-policy=disable_non_proxied_udp");
+      if (debugPort > 0) {
+        args << QStringLiteral("--remote-debugging-address=127.0.0.1");
+        args << QStringLiteral("--remote-debugging-port=%1").arg(QString::number(debugPort));
+      }
+      if (!language.isEmpty()) {
+        args << QStringLiteral("--lang=%1").arg(language);
+      }
+      if (!userAgent.isEmpty()) {
+        args << QStringLiteral("--user-agent=%1").arg(userAgent);
+      }
+      if (!timezone.isEmpty()) {
+        args << QStringLiteral("--blink-settings=timezoneOverride=%1").arg(timezone);
+      }
+      if (!windowSizeArg.isEmpty()) {
+        args << windowSizeArg;
+      }
+      if (touchEnabled) {
+        args << QStringLiteral("--touch-events=enabled");
+      }
+      if (!chromeExtDir.isEmpty()) {
+        args << QStringLiteral("--disable-features=DisableLoadExtensionCommandLineSwitch");
+        args << QStringLiteral("--load-extension=%1").arg(chromeExtDir);
+      }
+      if (compat) {
+        args << QStringLiteral("--test-type");
+        args << QStringLiteral("--no-sandbox");
+        args << QStringLiteral("--disable-gpu");
+        args << QStringLiteral("--disable-software-rasterizer");
+        args << QStringLiteral("--disable-dev-shm-usage");
+        args << QStringLiteral("--disable-breakpad");
+        args << QStringLiteral("--disable-crash-reporter");
+      }
+      if (!proxyArg.isEmpty()) {
+        args << proxyArg;
+      }
+      if (!url.isEmpty()) {
+        args << url;
+      } else {
+        args << QStringLiteral("about:blank");
+      }
+      return args;
+    };
+
+    auto scheduleRunningCheck = [this, p, profileId, sendStatus]() {
+      QPointer<QProcess> pp(p);
+      QTimer::singleShot(900, this, [this, pp, profileId, sendStatus]() mutable {
+        if (!pp) {
+          return;
+        }
+        if (m_profileProcByProfileId.value(profileId) != pp) {
+          return;
+        }
+        if (pp->state() == QProcess::Running) {
+          sendStatus(QStringLiteral("running"), QString());
+        }
+      });
+    };
+
+    QObject::connect(
+        p, &QProcess::finished, this,
+        [this, profileId, sendStatus, chromeExe, buildArgs, scheduleRunningCheck, cleanupProxyAuthExt, cleanupProxyMapping,
+         cleanupCdp](int exitCode, QProcess::ExitStatus st) mutable {
+                       const bool expectedStop = m_profileStopRequested.remove(profileId);
+                       if (expectedStop) {
+                         m_profileProcByProfileId.remove(profileId);
+                         cleanupCdp(profileId);
+                         cleanupProxyMapping(profileId);
+                         cleanupProxyAuthExt(profileId);
+                         sendStatus(QStringLiteral("stopped"), QString());
+                         return;
+                       }
+
+                       QProcess* cur = m_profileProcByProfileId.value(profileId);
+                       if (!cur) {
+                         return;
+                       }
+
+                       const bool compatRequested = cur->property("compat_requested").toBool();
+                       const bool compatTried = cur->property("compat_tried").toBool();
+                       const bool compatRetried = cur->property("compat_retried").toBool();
+                       if (!compatRequested && !compatTried && !compatRetried) {
+                         cur->setProperty("compat_retried", true);
+                         cur->setProperty("compat_tried", true);
+                         sendStatus(QStringLiteral("starting"), QString());
+                         cur->setProgram(chromeExe);
+                         cur->setArguments(buildArgs(true));
+                         cur->start();
+                         scheduleRunningCheck();
+                         return;
+                       }
+
+                       m_profileProcByProfileId.remove(profileId);
+                       cleanupCdp(profileId);
+                       cleanupProxyMapping(profileId);
+                       cleanupProxyAuthExt(profileId);
+                       if (st == QProcess::CrashExit) {
+                         sendStatus(QStringLiteral("crashed"), QStringLiteral("crash_exit"));
+                       } else if (exitCode == 0) {
+                         sendStatus(QStringLiteral("stopped"), QString());
+                       } else {
+                         sendStatus(QStringLiteral("crashed"), QStringLiteral("exit_code_%1").arg(exitCode));
+                       }
+                     });
+
+    if (!timezone.isEmpty()) {
+      QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+      env.insert(QStringLiteral("TZ"), timezone);
+      p->setProcessEnvironment(env);
     }
 
     p->setProgram(chromeExe);
-    p->setArguments(args);
+    p->setArguments(buildArgs(chromeCompat));
     p->start();
+
+    if (cdpEnabled && debugPort > 0) {
+      auto* nam = new QNetworkAccessManager(this);
+      auto attempts = std::make_shared<int>(0);
+      auto doPoll = std::make_shared<std::function<void()>>();
+      const QString shortId = profileId.left(8);
+
+      *doPoll = [this, nam, attempts, doPoll, profileId, shortId, debugPort, language, userAgent, platform, hardwareConcurrency,
+                 deviceMemoryGb, deviceScaleFactor, fpSeed, timezone, resolution, touchEnabled, geoEnabled, geoLatitude, geoLongitude,
+                 geoAccuracy, url, cleanupCdp]() mutable {
+        if (!m_profileProcByProfileId.contains(profileId)) {
+          nam->deleteLater();
+          return;
+        }
+        if (*attempts >= 25) {
+          nam->deleteLater();
+          return;
+        }
+        (*attempts)++;
+
+        QNetworkRequest req(QUrl(QStringLiteral("http://127.0.0.1:%1/json/version").arg(QString::number(debugPort))));
+        auto* reply = nam->get(req);
+        QObject::connect(reply, &QNetworkReply::finished, this,
+                         [this, reply, nam, attempts, doPoll, profileId, shortId, language, userAgent, platform,
+                          hardwareConcurrency, deviceMemoryGb, deviceScaleFactor, fpSeed, timezone, resolution, touchEnabled, geoEnabled,
+                          geoLatitude, geoLongitude, geoAccuracy, url, cleanupCdp]() mutable {
+          reply->deleteLater();
+          if (!m_profileProcByProfileId.contains(profileId)) {
+            nam->deleteLater();
+            return;
+          }
+          if (reply->error() != QNetworkReply::NoError) {
+            QTimer::singleShot(200, this, *doPoll);
+            return;
+          }
+          const QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+          if (!doc.isObject()) {
+            QTimer::singleShot(200, this, *doPoll);
+            return;
+          }
+          const QString ws = doc.object().value(QStringLiteral("webSocketDebuggerUrl")).toString().trimmed();
+          if (ws.isEmpty()) {
+            QTimer::singleShot(200, this, *doPoll);
+            return;
+          }
+
+          CdpClient::Fingerprint fp;
+          fp.language = language;
+          fp.userAgent = userAgent;
+          fp.platform = platform;
+          fp.hardwareConcurrency = hardwareConcurrency;
+          fp.deviceMemoryGb = deviceMemoryGb;
+          fp.deviceScaleFactor = deviceScaleFactor;
+          fp.seed = fpSeed;
+          fp.timezone = timezone;
+          fp.resolution = resolution;
+          fp.touchEnabled = touchEnabled;
+          fp.geoEnabled = geoEnabled;
+          fp.geoLatitude = geoLatitude;
+          fp.geoLongitude = geoLongitude;
+          fp.geoAccuracy = geoAccuracy;
+
+          cleanupCdp(profileId);
+          auto* cdp = new CdpClient(QUrl(ws), fp, url, this);
+          m_cdpByProfileId.insert(profileId, cdp);
+          QObject::connect(cdp, &CdpClient::ready, this, [this, shortId]() {
+            if (!m_peer) {
+              return;
+            }
+            QJsonObject log;
+            log.insert(QStringLiteral("type"), QStringLiteral("log.line"));
+            log.insert(QStringLiteral("message"), QStringLiteral("cdp[%1] ready").arg(shortId));
+            m_peer->send(log);
+          });
+          QObject::connect(cdp, &CdpClient::error, this, [this, shortId](const QString& message) {
+            if (!m_peer) {
+              return;
+            }
+            QJsonObject log;
+            log.insert(QStringLiteral("type"), QStringLiteral("log.line"));
+            log.insert(QStringLiteral("message"), QStringLiteral("cdp[%1] error %2").arg(shortId, message));
+            m_peer->send(log);
+          });
+          cdp->start();
+          nam->deleteLater();
+        });
+      };
+
+      QTimer::singleShot(200, this, *doPoll);
+    }
+
+    scheduleRunningCheck();
     return;
   }
 

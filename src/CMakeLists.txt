@@ -5,7 +5,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Network Quick Qml QuickControls2 Sql)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Network WebSockets Quick Qml QuickControls2 Sql)
 
 add_library(dokebrowser_shared STATIC
   shared/ipc/FramedJsonSocket.cpp

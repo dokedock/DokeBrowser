@@ -13,14 +13,20 @@
 #include <QDir>
 #include <QFile>
 #include <QGuiApplication>
+#include <QClipboard>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QProcess>
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QTimeZone>
+#include <QRandomGenerator>
+#include <QUrl>
 #include <QUuid>
 
 namespace {
@@ -49,6 +55,30 @@ qint64 parseTsMs(const QString& s, bool endOfDay) {
   dt.setTimeZone(QTimeZone::systemTimeZone());
   return dt.toMSecsSinceEpoch();
 }
+
+QString defaultLanguageForCountry(const QString& cc) {
+  const QString v = cc.trimmed().toUpper();
+  if (v == QStringLiteral("CN")) return QStringLiteral("zh-CN");
+  if (v == QStringLiteral("TW")) return QStringLiteral("zh-TW");
+  if (v == QStringLiteral("HK")) return QStringLiteral("zh-HK");
+  if (v == QStringLiteral("MO")) return QStringLiteral("zh-MO");
+  if (v == QStringLiteral("JP")) return QStringLiteral("ja-JP");
+  if (v == QStringLiteral("KR")) return QStringLiteral("ko-KR");
+  if (v == QStringLiteral("US")) return QStringLiteral("en-US");
+  if (v == QStringLiteral("CA")) return QStringLiteral("en-CA");
+  if (v == QStringLiteral("GB")) return QStringLiteral("en-GB");
+  if (v == QStringLiteral("AU")) return QStringLiteral("en-AU");
+  if (v == QStringLiteral("NZ")) return QStringLiteral("en-NZ");
+  if (v == QStringLiteral("DE")) return QStringLiteral("de-DE");
+  if (v == QStringLiteral("FR")) return QStringLiteral("fr-FR");
+  if (v == QStringLiteral("ES")) return QStringLiteral("es-ES");
+  if (v == QStringLiteral("IT")) return QStringLiteral("it-IT");
+  if (v == QStringLiteral("NL")) return QStringLiteral("nl-NL");
+  if (v == QStringLiteral("RU")) return QStringLiteral("ru-RU");
+  if (v == QStringLiteral("BR")) return QStringLiteral("pt-BR");
+  if (v == QStringLiteral("PT")) return QStringLiteral("pt-PT");
+  return {};
+}
 }
 
 AppController::AppController(QObject* parent) : QObject(parent) {
@@ -59,6 +89,7 @@ AppController::AppController(QObject* parent) : QObject(parent) {
   m_proxyPool = new ProxyPoolModel(this);
   m_ipc = new IpcClient(this);
   m_repo = new ProfileRepository(this);
+  m_http = new QNetworkAccessManager(this);
 
   QObject::connect(m_ipc, &IpcClient::logLineReceived, this, [this](const QString& line) {
     appendLogLine(line, QStringLiteral("agent"));
@@ -149,6 +180,10 @@ AppController::AppController(QObject* parent) : QObject(parent) {
       updated.proxyLastAtMs = QDateTime::currentMSecsSinceEpoch();
       m_profiles->updateAt(i, updated);
       break;
+    }
+
+    if (ok && !observedIp.isEmpty()) {
+      applyProxyGeoToProfile(profileId, observedIp);
     }
 
     if (profileId == selectedProfileId()) {
@@ -308,6 +343,195 @@ void AppController::updateSelectedProfileItem(const ProfileListModel::ProfileIte
   emit selectedProfileChanged();
 }
 
+void AppController::applyProxyGeoToProfile(const QString& profileId, const QString& ip) {
+  if (!m_http || !m_profiles) {
+    return;
+  }
+  const QString pid = profileId.trimmed();
+  const QString tip = ip.trimmed();
+  if (pid.isEmpty() || tip.isEmpty()) {
+    return;
+  }
+
+  QStringList urls;
+  urls.push_back(QStringLiteral("https://ipwho.is/%1").arg(tip));
+  urls.push_back(QStringLiteral("https://ipapi.co/%1/json/").arg(tip));
+  urls.push_back(QStringLiteral("http://ip-api.com/json/%1?fields=status,countryCode,timezone,lat,lon").arg(tip));
+  urls.removeDuplicates();
+
+  auto sent = std::make_shared<bool>(false);
+  auto attempt = std::make_shared<int>(0);
+  auto doAttempt = std::make_shared<std::function<void()>>();
+
+  *doAttempt = [this, pid, tip, urls, sent, attempt, doAttempt]() mutable {
+    if (*sent) {
+      return;
+    }
+    if (*attempt >= urls.size()) {
+      appendLogLine(QStringLiteral("proxy_geo_failed ip=%1").arg(tip), QStringLiteral("proxy"), pid);
+      return;
+    }
+
+    const QString url = urls.at(*attempt);
+    (*attempt)++;
+
+    QNetworkRequest req{QUrl(url)};
+    req.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("DokeBrowser/0.1"));
+    req.setRawHeader("Accept", "application/json");
+
+    QNetworkReply* reply = m_http->get(req);
+    auto* timeout = new QTimer(reply);
+    timeout->setSingleShot(true);
+    timeout->start(5000);
+
+    QObject::connect(timeout, &QTimer::timeout, this, [reply, timeout, doAttempt, sent]() mutable {
+      if (*sent) {
+        timeout->deleteLater();
+        reply->deleteLater();
+        return;
+      }
+      reply->abort();
+      timeout->deleteLater();
+      reply->deleteLater();
+      (*doAttempt)();
+    });
+
+    QObject::connect(reply, &QNetworkReply::finished, this, [this, pid, tip, reply, timeout, doAttempt, sent]() mutable {
+      timeout->stop();
+      timeout->deleteLater();
+      if (*sent) {
+        reply->deleteLater();
+        return;
+      }
+
+      const QByteArray body = reply->readAll();
+      QJsonParseError parseErr{};
+      const QJsonDocument doc = QJsonDocument::fromJson(body, &parseErr);
+      if (parseErr.error != QJsonParseError::NoError || !doc.isObject()) {
+        reply->deleteLater();
+        (*doAttempt)();
+        return;
+      }
+      const QJsonObject obj = doc.object();
+
+      if (obj.contains(QStringLiteral("success")) && !obj.value(QStringLiteral("success")).toBool(true)) {
+        reply->deleteLater();
+        (*doAttempt)();
+        return;
+      }
+      const QString status = obj.value(QStringLiteral("status")).toString().trimmed().toLower();
+      if (!status.isEmpty() && status != QStringLiteral("success")) {
+        reply->deleteLater();
+        (*doAttempt)();
+        return;
+      }
+
+      QString tz;
+      const QJsonValue tzv = obj.value(QStringLiteral("timezone"));
+      if (tzv.isObject()) {
+        tz = tzv.toObject().value(QStringLiteral("id")).toString();
+      } else {
+        tz = tzv.toString();
+      }
+      tz = tz.trimmed();
+
+      QString cc = obj.value(QStringLiteral("country_code")).toString().trimmed().toUpper();
+      if (cc.isEmpty()) {
+        cc = obj.value(QStringLiteral("countryCode")).toString().trimmed().toUpper();
+      }
+
+      QString langFromApi;
+      const QJsonValue langsV = obj.value(QStringLiteral("languages"));
+      if (langsV.isString()) {
+        langFromApi = langsV.toString().trimmed();
+        if (!langFromApi.isEmpty()) {
+          langFromApi = langFromApi.split(',').value(0).trimmed();
+          const int semi = langFromApi.indexOf(';');
+          if (semi >= 0) {
+            langFromApi = langFromApi.left(semi).trimmed();
+          }
+        }
+      }
+
+      bool hasGeo = false;
+      double lat = 0;
+      double lon = 0;
+      const QJsonValue latV = obj.value(QStringLiteral("latitude"));
+      const QJsonValue lonV = obj.value(QStringLiteral("longitude"));
+      const QJsonValue lat2V = obj.value(QStringLiteral("lat"));
+      const QJsonValue lon2V = obj.value(QStringLiteral("lon"));
+      if (latV.isDouble()) {
+        lat = latV.toDouble();
+        hasGeo = true;
+      } else if (lat2V.isDouble()) {
+        lat = lat2V.toDouble();
+        hasGeo = true;
+      }
+      if (lonV.isDouble()) {
+        lon = lonV.toDouble();
+        hasGeo = true;
+      } else if (lon2V.isDouble()) {
+        lon = lon2V.toDouble();
+        hasGeo = true;
+      }
+      double acc = 0;
+      const QJsonValue accV = obj.value(QStringLiteral("accuracy"));
+      const QJsonValue acc2V = obj.value(QStringLiteral("accuracy_radius"));
+      if (accV.isDouble()) {
+        acc = accV.toDouble();
+      } else if (acc2V.isDouble()) {
+        acc = acc2V.toDouble();
+      }
+
+      if (tz.isEmpty()) {
+        reply->deleteLater();
+        (*doAttempt)();
+        return;
+      }
+
+      for (int i = 0; i < m_profiles->items().size(); i++) {
+        const auto& it = m_profiles->items().at(i);
+        if (it.id != pid) {
+          continue;
+        }
+        if (it.fingerprintMode.trimmed() == QStringLiteral("random")) {
+          appendLogLine(QStringLiteral("proxy_geo_skipped profile=%1 reason=fingerprint_mode_random").arg(pid), QStringLiteral("proxy"),
+                        pid);
+          break;
+        }
+        auto updated = it;
+        updated.timezone = tz;
+        const QString lang = !langFromApi.isEmpty() ? langFromApi : defaultLanguageForCountry(cc);
+        if (!lang.trimmed().isEmpty()) {
+          updated.language = lang.trimmed();
+        }
+        if (hasGeo) {
+          updated.geoEnabled = true;
+          updated.geoLatitude = lat;
+          updated.geoLongitude = lon;
+          updated.geoAccuracy = acc > 0 ? acc : 1000;
+        }
+        m_profiles->updateAt(i, updated);
+        persistProfile(updated);
+        if (pid == selectedProfileId()) {
+          emit selectedProfileChanged();
+        }
+        appendLogLine(QStringLiteral("proxy_geo_applied ip=%1 tz=%2 lang=%3 restart_required=true")
+                          .arg(tip)
+                          .arg(updated.timezone)
+                          .arg(updated.language),
+                      QStringLiteral("proxy"), pid);
+        break;
+      }
+
+      *sent = true;
+      reply->deleteLater();
+    });
+  };
+
+  (*doAttempt)();
+}
+
 QString AppController::selectedProfileId() const {
   if (!hasSelectedProfile()) {
     return {};
@@ -415,6 +639,29 @@ void AppController::setSelectedProfileDataDir(const QString& value) {
   updateSelectedProfileItem(it);
 }
 
+QString AppController::selectedProfileFingerprintMode() const {
+  if (!hasSelectedProfile()) {
+    return {};
+  }
+  return m_profiles->items().at(m_selectedProfileIndex).fingerprintMode;
+}
+
+void AppController::setSelectedProfileFingerprintMode(const QString& value) {
+  if (!hasSelectedProfile()) {
+    return;
+  }
+  auto it = selectedProfileItem();
+  QString v = value.trimmed();
+  if (v.isEmpty()) {
+    v = QStringLiteral("follow_ip");
+  }
+  if (it.fingerprintMode == v) {
+    return;
+  }
+  it.fingerprintMode = v;
+  updateSelectedProfileItem(it);
+}
+
 QString AppController::selectedProfileLanguage() const {
   if (!hasSelectedProfile()) {
     return {};
@@ -432,6 +679,106 @@ void AppController::setSelectedProfileLanguage(const QString& value) {
     return;
   }
   it.language = v;
+  updateSelectedProfileItem(it);
+}
+
+QString AppController::selectedProfileUserAgent() const {
+  if (!hasSelectedProfile()) {
+    return {};
+  }
+  return m_profiles->items().at(m_selectedProfileIndex).userAgent;
+}
+
+void AppController::setSelectedProfileUserAgent(const QString& value) {
+  if (!hasSelectedProfile()) {
+    return;
+  }
+  auto it = selectedProfileItem();
+  const QString v = value.trimmed();
+  if (it.userAgent == v) {
+    return;
+  }
+  it.userAgent = v;
+  updateSelectedProfileItem(it);
+}
+
+QString AppController::selectedProfilePlatform() const {
+  if (!hasSelectedProfile()) {
+    return {};
+  }
+  return m_profiles->items().at(m_selectedProfileIndex).platform;
+}
+
+void AppController::setSelectedProfilePlatform(const QString& value) {
+  if (!hasSelectedProfile()) {
+    return;
+  }
+  auto it = selectedProfileItem();
+  const QString v = value.trimmed();
+  if (it.platform == v) {
+    return;
+  }
+  it.platform = v;
+  updateSelectedProfileItem(it);
+}
+
+int AppController::selectedProfileHardwareConcurrency() const {
+  if (!hasSelectedProfile()) {
+    return 0;
+  }
+  return m_profiles->items().at(m_selectedProfileIndex).hardwareConcurrency;
+}
+
+void AppController::setSelectedProfileHardwareConcurrency(int value) {
+  if (!hasSelectedProfile()) {
+    return;
+  }
+  auto it = selectedProfileItem();
+  const int v = qMax(0, value);
+  if (it.hardwareConcurrency == v) {
+    return;
+  }
+  it.hardwareConcurrency = v;
+  updateSelectedProfileItem(it);
+}
+
+int AppController::selectedProfileDeviceMemoryGb() const {
+  if (!hasSelectedProfile()) {
+    return 0;
+  }
+  return m_profiles->items().at(m_selectedProfileIndex).deviceMemoryGb;
+}
+
+void AppController::setSelectedProfileDeviceMemoryGb(int value) {
+  if (!hasSelectedProfile()) {
+    return;
+  }
+  auto it = selectedProfileItem();
+  const int v = qMax(0, value);
+  if (it.deviceMemoryGb == v) {
+    return;
+  }
+  it.deviceMemoryGb = v;
+  updateSelectedProfileItem(it);
+}
+
+double AppController::selectedProfileDeviceScaleFactor() const {
+  if (!hasSelectedProfile()) {
+    return 0;
+  }
+  return m_profiles->items().at(m_selectedProfileIndex).deviceScaleFactor;
+}
+
+void AppController::setSelectedProfileDeviceScaleFactor(double value) {
+  if (!hasSelectedProfile()) {
+    return;
+  }
+  auto it = selectedProfileItem();
+  const double v = value < 0 ? 0 : value;
+  if (qFuzzyCompare(it.deviceScaleFactor, v)) {
+    return;
+  }
+  it.deviceScaleFactor = v;
   updateSelectedProfileItem(it);
 }
 
@@ -840,12 +1187,32 @@ void AppController::runCheckedProfiles() {
       msg.insert(QStringLiteral("profile_id"), it.id);
       msg.insert(QStringLiteral("profile_name"), it.name);
       msg.insert(QStringLiteral("data_dir"), it.dataDir);
+      msg.insert(QStringLiteral("fingerprint_mode"), it.fingerprintMode);
+      msg.insert(QStringLiteral("language"), it.language);
+      msg.insert(QStringLiteral("user_agent"), it.userAgent);
+      msg.insert(QStringLiteral("platform"), it.platform);
+      msg.insert(QStringLiteral("hardware_concurrency"), it.hardwareConcurrency);
+      msg.insert(QStringLiteral("device_memory_gb"), it.deviceMemoryGb);
+      msg.insert(QStringLiteral("device_scale_factor"), it.deviceScaleFactor);
+      msg.insert(QStringLiteral("timezone"), it.timezone);
+      msg.insert(QStringLiteral("resolution"), it.resolution);
+      msg.insert(QStringLiteral("touch_enabled"), it.touchEnabled);
+      msg.insert(QStringLiteral("geo_enabled"), it.geoEnabled);
+      msg.insert(QStringLiteral("geo_latitude"), it.geoLatitude);
+      msg.insert(QStringLiteral("geo_longitude"), it.geoLongitude);
+      msg.insert(QStringLiteral("geo_accuracy"), it.geoAccuracy);
       if (it.proxyEnabled) {
         QJsonObject proxy;
         proxy.insert(QStringLiteral("enabled"), true);
         proxy.insert(QStringLiteral("type"), it.proxyType);
         proxy.insert(QStringLiteral("host"), it.proxyHost);
         proxy.insert(QStringLiteral("port"), it.proxyPort);
+        if (!it.proxyUsername.isEmpty()) {
+          proxy.insert(QStringLiteral("username"), it.proxyUsername);
+        }
+        if (!it.proxyPassword.isEmpty()) {
+          proxy.insert(QStringLiteral("password"), it.proxyPassword);
+        }
         msg.insert(QStringLiteral("proxy"), proxy);
       }
       m_ipc->send(msg);
@@ -1420,6 +1787,86 @@ void AppController::cancelProxyPoolTestBatch() {
   appendLogLine(QStringLiteral("proxy_pool_test_batch cancelled"), QStringLiteral("proxy"));
 }
 
+void AppController::randomizeSelectedFingerprint() {
+  if (!hasSelectedProfile()) {
+    return;
+  }
+
+  struct Preset {
+    const char* language;
+    const char* timezone;
+    const char* resolution;
+    const char* userAgent;
+    const char* platform;
+    int hardwareConcurrency;
+    int deviceMemoryGb;
+    double deviceScaleFactor;
+    bool touchEnabled;
+  };
+
+#if defined(Q_OS_MAC)
+  static const QVector<Preset> presets = {
+      {"zh-CN", "Asia/Shanghai", "2560x1600",
+       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+       "MacIntel", 8, 8, 2.0, false},
+      {"ja-JP", "Asia/Tokyo", "2560x1600",
+       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+       "MacIntel", 8, 16, 2.0, false},
+      {"fr-FR", "Europe/Paris", "2560x1600",
+       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+       "MacIntel", 8, 8, 2.0, false},
+      {"en-US", "America/Los_Angeles", "2560x1600",
+       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+       "MacIntel", 8, 16, 2.0, false},
+  };
+#elif defined(Q_OS_WIN)
+  static const QVector<Preset> presets = {
+      {"en-US", "America/New_York", "1920x1080",
+       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+       "Win32", 8, 8, 1.0, false},
+      {"de-DE", "Europe/Berlin", "1920x1080",
+       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+       "Win32", 8, 16, 1.0, false},
+      {"ja-JP", "Asia/Tokyo", "1920x1080",
+       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+       "Win32", 8, 8, 1.0, false},
+  };
+#else
+  static const QVector<Preset> presets = {
+      {"en-US", "America/New_York", "1920x1080",
+       "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+       "Linux x86_64", 8, 8, 1.0, false},
+      {"zh-CN", "Asia/Shanghai", "1920x1080",
+       "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+       "Linux x86_64", 8, 16, 1.0, false},
+  };
+#endif
+
+  auto it = selectedProfileItem();
+  auto* rng = QRandomGenerator::global();
+  it.fingerprintMode = QStringLiteral("random");
+  const auto p = presets.at(rng->bounded(presets.size()));
+  it.language = QString::fromUtf8(p.language);
+  it.timezone = QString::fromUtf8(p.timezone);
+  it.resolution = QString::fromUtf8(p.resolution);
+  it.userAgent = QString::fromUtf8(p.userAgent);
+  it.platform = QString::fromUtf8(p.platform);
+  it.hardwareConcurrency = p.hardwareConcurrency;
+  it.deviceMemoryGb = p.deviceMemoryGb;
+  it.deviceScaleFactor = p.deviceScaleFactor;
+  it.touchEnabled = p.touchEnabled;
+  updateSelectedProfileItem(it);
+
+  appendLogLine(QStringLiteral("fingerprint_randomized mode=random lang=%1 ua=%2 platform=%3 tz=%4 res=%5 touch=%6")
+                    .arg(it.language)
+                    .arg(it.userAgent.isEmpty() ? QStringLiteral("-") : QStringLiteral("set"))
+                    .arg(it.platform.isEmpty() ? QStringLiteral("-") : it.platform)
+                    .arg(it.timezone)
+                    .arg(it.resolution)
+                    .arg(it.touchEnabled ? QStringLiteral("true") : QStringLiteral("false")),
+                QStringLiteral("ui"), it.id);
+}
+
 void AppController::setProfileChecked(const QString& profileId, bool checked) {
   const QString pid = profileId.trimmed();
   if (pid.isEmpty()) {
@@ -1450,12 +1897,33 @@ void AppController::createProfile() {
   item.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
   item.name = newProfileName();
   item.group = QStringLiteral("默认分组");
+  item.remark = QStringLiteral("");
   item.status = QStringLiteral("stopped");
   item.createdAtMs = QDateTime::currentMSecsSinceEpoch();
+  item.fingerprintMode = QStringLiteral("follow_ip");
   item.language = QStringLiteral("zh-CN");
+  item.userAgent = QString();
+#if defined(Q_OS_MAC)
+  item.platform = QStringLiteral("MacIntel");
+#elif defined(Q_OS_WIN)
+  item.platform = QStringLiteral("Win32");
+#else
+  item.platform = QStringLiteral("Linux x86_64");
+#endif
+  item.hardwareConcurrency = 8;
+  item.deviceMemoryGb = 8;
+  item.deviceScaleFactor = 1.0;
   item.timezone = QString::fromUtf8(QTimeZone::systemTimeZoneId());
   item.resolution = QStringLiteral("1920x1080");
   item.touchEnabled = false;
+  const QString sandbox = qEnvironmentVariable("TRAE_SANDBOX_STORAGE_PATH").trimmed();
+  if (!sandbox.isEmpty()) {
+    const QString base = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation)).filePath(QStringLiteral("dokebrowser"));
+    item.dataDir = QDir(base).filePath(QStringLiteral("profiles/%1/chrome").arg(item.id));
+  } else {
+    const QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    item.dataDir = QDir(base).filePath(QStringLiteral("profiles/%1/chrome").arg(item.id));
+  }
 
   item.proxyEnabled = false;
   item.proxyType = QStringLiteral("direct");
@@ -1511,12 +1979,32 @@ void AppController::runSelectedProfile() {
   msg.insert(QStringLiteral("profile_id"), it.id);
   msg.insert(QStringLiteral("profile_name"), it.name);
   msg.insert(QStringLiteral("data_dir"), it.dataDir);
+  msg.insert(QStringLiteral("fingerprint_mode"), it.fingerprintMode);
+  msg.insert(QStringLiteral("language"), it.language);
+  msg.insert(QStringLiteral("user_agent"), it.userAgent);
+  msg.insert(QStringLiteral("platform"), it.platform);
+  msg.insert(QStringLiteral("hardware_concurrency"), it.hardwareConcurrency);
+  msg.insert(QStringLiteral("device_memory_gb"), it.deviceMemoryGb);
+  msg.insert(QStringLiteral("device_scale_factor"), it.deviceScaleFactor);
+  msg.insert(QStringLiteral("timezone"), it.timezone);
+  msg.insert(QStringLiteral("resolution"), it.resolution);
+  msg.insert(QStringLiteral("touch_enabled"), it.touchEnabled);
+  msg.insert(QStringLiteral("geo_enabled"), it.geoEnabled);
+  msg.insert(QStringLiteral("geo_latitude"), it.geoLatitude);
+  msg.insert(QStringLiteral("geo_longitude"), it.geoLongitude);
+  msg.insert(QStringLiteral("geo_accuracy"), it.geoAccuracy);
   if (it.proxyEnabled) {
     QJsonObject proxy;
     proxy.insert(QStringLiteral("enabled"), true);
     proxy.insert(QStringLiteral("type"), it.proxyType);
     proxy.insert(QStringLiteral("host"), it.proxyHost);
     proxy.insert(QStringLiteral("port"), it.proxyPort);
+    if (!it.proxyUsername.isEmpty()) {
+      proxy.insert(QStringLiteral("username"), it.proxyUsername);
+    }
+    if (!it.proxyPassword.isEmpty()) {
+      proxy.insert(QStringLiteral("password"), it.proxyPassword);
+    }
     msg.insert(QStringLiteral("proxy"), proxy);
   }
   m_ipc->send(msg);
@@ -1844,6 +2332,18 @@ void AppController::clearLogs() {
   m_logs->clear();
 }
 
+void AppController::copyLogsToClipboard() {
+  if (!m_logs) {
+    return;
+  }
+  auto* cb = QGuiApplication::clipboard();
+  if (!cb) {
+    return;
+  }
+  cb->setText(m_logs->dump());
+  appendLogLine(QStringLiteral("logs_copied_to_clipboard"), QStringLiteral("ui"));
+}
+
 void AppController::setLogViewMode(const QString& mode) {
   const QString v = mode.trimmed();
   if (v.isEmpty()) {
@@ -2026,9 +2526,15 @@ bool AppController::selectProfileByIdPrefix(const QString& prefix) {
 }
 
 QString AppController::legacyProfilesJsonPath() const {
-  const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+  QString dir;
+  const QString sandbox = qEnvironmentVariable("TRAE_SANDBOX_STORAGE_PATH").trimmed();
+  if (!sandbox.isEmpty()) {
+    dir = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation)).filePath(QStringLiteral("dokebrowser"));
+  } else {
+    dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+  }
   QDir().mkpath(dir);
-  return dir + QStringLiteral("/profiles.json");
+  return QDir(dir).filePath(QStringLiteral("profiles.json"));
 }
 
 void AppController::loadProfiles() {
@@ -2041,7 +2547,19 @@ void AppController::loadProfiles() {
     item.group = QStringLiteral("默认分组");
     item.status = QStringLiteral("stopped");
     item.createdAtMs = QDateTime::currentMSecsSinceEpoch();
+    item.fingerprintMode = QStringLiteral("follow_ip");
     item.language = QStringLiteral("zh-CN");
+    item.userAgent = QString();
+#if defined(Q_OS_MAC)
+    item.platform = QStringLiteral("MacIntel");
+#elif defined(Q_OS_WIN)
+    item.platform = QStringLiteral("Win32");
+#else
+    item.platform = QStringLiteral("Linux x86_64");
+#endif
+    item.hardwareConcurrency = 8;
+    item.deviceMemoryGb = 8;
+    item.deviceScaleFactor = 1.0;
     item.timezone = QString::fromUtf8(QTimeZone::systemTimeZoneId());
     item.resolution = QStringLiteral("1920x1080");
     item.touchEnabled = false;
@@ -2097,7 +2615,49 @@ void AppController::loadProfiles() {
           item.createdAtMs = static_cast<qint64>(o.value(QStringLiteral("created_at_ms")).toDouble(0));
           item.lastOpenAtMs = static_cast<qint64>(o.value(QStringLiteral("last_open_at_ms")).toDouble(0));
           item.dataDir = o.value(QStringLiteral("data_dir")).toString();
+          item.fingerprintMode = o.value(QStringLiteral("fingerprint_mode")).toString();
+          if (item.fingerprintMode.isEmpty()) {
+            item.fingerprintMode = o.value(QStringLiteral("fingerprintMode")).toString();
+          }
+          if (item.fingerprintMode.isEmpty()) {
+            item.fingerprintMode = QStringLiteral("follow_ip");
+          }
           item.language = o.value(QStringLiteral("language")).toString(QStringLiteral("zh-CN"));
+          item.userAgent = o.value(QStringLiteral("user_agent")).toString();
+          if (item.userAgent.isEmpty()) {
+            item.userAgent = o.value(QStringLiteral("userAgent")).toString();
+          }
+          item.platform = o.value(QStringLiteral("platform")).toString();
+          item.hardwareConcurrency = o.value(QStringLiteral("hardware_concurrency")).toInt(0);
+          if (item.hardwareConcurrency <= 0) {
+            item.hardwareConcurrency = o.value(QStringLiteral("hardwareConcurrency")).toInt(0);
+          }
+          item.deviceMemoryGb = o.value(QStringLiteral("device_memory_gb")).toInt(0);
+          if (item.deviceMemoryGb <= 0) {
+            item.deviceMemoryGb = o.value(QStringLiteral("deviceMemoryGb")).toInt(0);
+          }
+          item.deviceScaleFactor = o.value(QStringLiteral("device_scale_factor")).toDouble(0);
+          if (item.deviceScaleFactor <= 0) {
+            item.deviceScaleFactor = o.value(QStringLiteral("deviceScaleFactor")).toDouble(0);
+          }
+          if (item.platform.isEmpty()) {
+#if defined(Q_OS_MAC)
+            item.platform = QStringLiteral("MacIntel");
+#elif defined(Q_OS_WIN)
+            item.platform = QStringLiteral("Win32");
+#else
+            item.platform = QStringLiteral("Linux x86_64");
+#endif
+          }
+          if (item.hardwareConcurrency <= 0) {
+            item.hardwareConcurrency = 8;
+          }
+          if (item.deviceMemoryGb <= 0) {
+            item.deviceMemoryGb = 8;
+          }
+          if (item.deviceScaleFactor <= 0) {
+            item.deviceScaleFactor = 1.0;
+          }
           item.timezone =
               o.value(QStringLiteral("timezone")).toString(QString::fromUtf8(QTimeZone::systemTimeZoneId()));
           item.resolution = o.value(QStringLiteral("resolution")).toString(QStringLiteral("1920x1080"));

@@ -22,10 +22,20 @@ public:
     qint64 proxyLastAtMs = 0;
 
     QString dataDir;
+    QString fingerprintMode;
     QString language;
+    QString userAgent;
+    QString platform;
+    int hardwareConcurrency = 0;
+    int deviceMemoryGb = 0;
+    double deviceScaleFactor = 0;
     QString timezone;
     QString resolution;
     bool touchEnabled = false;
+    bool geoEnabled = false;
+    double geoLatitude = 0;
+    double geoLongitude = 0;
+    double geoAccuracy = 0;
 
     bool proxyEnabled = false;
     QString proxyType;

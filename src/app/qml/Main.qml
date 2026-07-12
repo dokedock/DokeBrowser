@@ -49,7 +49,14 @@ ApplicationWindow {
                 Button {
                     Layout.fillWidth: true
                     text: "新建浏览器"
-                    onClicked: AppController.createProfile()
+                    onClicked: {
+                        searchInput.text = ""
+                        groupFilter.currentIndex = 0
+                        bottomTabs.currentIndex = 0
+                        AppController.resetFilters()
+                        AppController.createProfile()
+                        Qt.callLater(function() { profileListView.positionViewAtEnd() })
+                    }
                 }
 
                 ColumnLayout {
@@ -60,7 +67,7 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         text: "环境管理"
                         highlighted: true
-                        onClicked: AppController.resetFilters()
+                        onClicked: envDialog.open()
                     }
                     Button {
                         Layout.fillWidth: true
@@ -223,6 +230,70 @@ ApplicationWindow {
             }
         }
 
+        Dialog {
+            id: envDialog
+            modal: true
+            title: "环境管理"
+            implicitWidth: 560
+            standardButtons: Dialog.Close
+            anchors.centerIn: parent
+
+            background: Rectangle {
+                color: theme.card
+                radius: theme.radius
+                border.width: 1
+                border.color: theme.border
+            }
+
+            contentItem: Item {
+                implicitWidth: 520
+                implicitHeight: content.implicitHeight + 24
+                ColumnLayout {
+                    id: content
+                    x: 12
+                    y: 12
+                    width: parent.implicitWidth - 24
+                    spacing: 12
+
+                    Label {
+                        text: AppController.selectedProfileIndex >= 0 ? ("当前 Profile：" + AppController.selectedProfileName) : "请先选择一个 Profile"
+                        color: theme.text
+                        font.pixelSize: 14
+                    }
+
+                    GridLayout {
+                        Layout.fillWidth: true
+                        columns: 2
+                        columnSpacing: 10
+                        rowSpacing: 10
+
+                        Label { text: "语言"; color: theme.text2 }
+                        TextField { Layout.fillWidth: true; text: AppController.selectedProfileLanguage; enabled: false }
+
+                        Label { text: "时区"; color: theme.text2 }
+                        TextField { Layout.fillWidth: true; text: AppController.selectedProfileTimezone; enabled: false }
+
+                        Label { text: "分辨率"; color: theme.text2 }
+                        TextField { Layout.fillWidth: true; text: AppController.selectedProfileResolution; enabled: false }
+
+                        Label { text: "触屏"; color: theme.text2 }
+                        CheckBox { checked: AppController.selectedProfileTouchEnabled; enabled: false }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+                        Item { Layout.fillWidth: true }
+                        Button {
+                            text: "一键随机指纹"
+                            enabled: AppController.selectedProfileIndex >= 0
+                            onClicked: AppController.randomizeSelectedFingerprint()
+                        }
+                    }
+                }
+            }
+        }
+
         Frame {
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -332,6 +403,7 @@ ApplicationWindow {
                             }
 
                             ListView {
+                                id: profileListView
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
                                 clip: true
@@ -480,6 +552,7 @@ ApplicationWindow {
                                 id: batchDeleteDialog
                                 modal: true
                                 title: "批量删除"
+                                implicitWidth: 420
                                 standardButtons: Dialog.Ok | Dialog.Cancel
                                 contentItem: Label {
                                     padding: 12
@@ -493,12 +566,20 @@ ApplicationWindow {
                                 id: groupDialog
                                 modal: true
                                 title: "设置分组"
+                                implicitWidth: 420
                                 standardButtons: Dialog.Ok | Dialog.Cancel
-                                contentItem: ColumnLayout {
-                                    spacing: 10
-                                    padding: 12
-                                    Label { text: "分组名"; color: theme.text2 }
-                                    TextField { id: groupInput; Layout.preferredWidth: 320; placeholderText: "例如：A组"; text: "" }
+                                contentItem: Item {
+                                    implicitWidth: 360
+                                    implicitHeight: form.implicitHeight + 24
+                                    ColumnLayout {
+                                        id: form
+                                        x: 12
+                                        y: 12
+                                        width: parent.implicitWidth - 24
+                                        spacing: 10
+                                        Label { text: "分组名"; color: theme.text2 }
+                                        TextField { id: groupInput; Layout.preferredWidth: 320; placeholderText: "例如：A组"; text: "" }
+                                    }
                                 }
                                 onAccepted: {
                                     AppController.setGroupForCheckedProfiles(groupInput.text)
@@ -552,16 +633,25 @@ ApplicationWindow {
                                         Label { text: "数据目录"; color: theme.text2 }
                                         TextField {
                                             Layout.fillWidth: true
+                                            Layout.columnSpan: 3
                                             text: AppController.selectedProfileDataDir
                                             enabled: AppController.selectedProfileIndex >= 0
                                             onEditingFinished: AppController.selectedProfileDataDir = text
                                         }
-                                        Label { text: "分辨率"; color: theme.text2 }
-                                        TextField {
+
+                                        Label { text: "指纹策略"; color: theme.text2 }
+                                        ComboBox {
                                             Layout.fillWidth: true
-                                            text: AppController.selectedProfileResolution
                                             enabled: AppController.selectedProfileIndex >= 0
-                                            onEditingFinished: AppController.selectedProfileResolution = text
+                                            model: ["follow_ip", "random"]
+                                            currentIndex: Math.max(0, model.indexOf(AppController.selectedProfileFingerprintMode))
+                                            onActivated: AppController.selectedProfileFingerprintMode = currentText
+                                        }
+                                        Label { text: "生成随机"; color: theme.text2 }
+                                        Button {
+                                            text: "生成"
+                                            enabled: AppController.selectedProfileIndex >= 0 && AppController.selectedProfileFingerprintMode === "random"
+                                            onClicked: AppController.randomizeSelectedFingerprint()
                                         }
 
                                         Label { text: "语言"; color: theme.text2 }
@@ -579,6 +669,63 @@ ApplicationWindow {
                                             onEditingFinished: AppController.selectedProfileTimezone = text
                                         }
 
+                                        Label { text: "UA"; color: theme.text2 }
+                                        TextField {
+                                            Layout.fillWidth: true
+                                            Layout.columnSpan: 3
+                                            text: AppController.selectedProfileUserAgent
+                                            enabled: AppController.selectedProfileIndex >= 0
+                                            onEditingFinished: AppController.selectedProfileUserAgent = text
+                                        }
+
+                                        Label { text: "平台"; color: theme.text2 }
+                                        TextField {
+                                            Layout.fillWidth: true
+                                            text: AppController.selectedProfilePlatform
+                                            enabled: AppController.selectedProfileIndex >= 0
+                                            onEditingFinished: AppController.selectedProfilePlatform = text
+                                        }
+                                        Label { text: "分辨率"; color: theme.text2 }
+                                        TextField {
+                                            Layout.fillWidth: true
+                                            text: AppController.selectedProfileResolution
+                                            enabled: AppController.selectedProfileIndex >= 0
+                                            onEditingFinished: AppController.selectedProfileResolution = text
+                                        }
+
+                                        Label { text: "CPU 线程"; color: theme.text2 }
+                                        TextField {
+                                            Layout.fillWidth: true
+                                            enabled: AppController.selectedProfileIndex >= 0
+                                            inputMethodHints: Qt.ImhDigitsOnly
+                                            text: AppController.selectedProfileHardwareConcurrency > 0 ? String(AppController.selectedProfileHardwareConcurrency) : ""
+                                            onEditingFinished: {
+                                                var v = parseInt(text.length > 0 ? text : "0")
+                                                AppController.selectedProfileHardwareConcurrency = isNaN(v) ? 0 : v
+                                            }
+                                        }
+                                        Label { text: "内存GB"; color: theme.text2 }
+                                        TextField {
+                                            Layout.fillWidth: true
+                                            enabled: AppController.selectedProfileIndex >= 0
+                                            inputMethodHints: Qt.ImhDigitsOnly
+                                            text: AppController.selectedProfileDeviceMemoryGb > 0 ? String(AppController.selectedProfileDeviceMemoryGb) : ""
+                                            onEditingFinished: {
+                                                var v = parseInt(text.length > 0 ? text : "0")
+                                                AppController.selectedProfileDeviceMemoryGb = isNaN(v) ? 0 : v
+                                            }
+                                        }
+
+                                        Label { text: "DPR"; color: theme.text2 }
+                                        TextField {
+                                            Layout.fillWidth: true
+                                            enabled: AppController.selectedProfileIndex >= 0
+                                            text: AppController.selectedProfileDeviceScaleFactor > 0 ? String(AppController.selectedProfileDeviceScaleFactor) : ""
+                                            onEditingFinished: {
+                                                var v = parseFloat(text.length > 0 ? text : "0")
+                                                AppController.selectedProfileDeviceScaleFactor = isNaN(v) ? 0 : v
+                                            }
+                                        }
                                         Label { text: "触屏"; color: theme.text2 }
                                         CheckBox {
                                             Layout.alignment: Qt.AlignVCenter
@@ -586,7 +733,6 @@ ApplicationWindow {
                                             enabled: AppController.selectedProfileIndex >= 0
                                             onToggled: AppController.selectedProfileTouchEnabled = checked
                                         }
-                                        Item { }
                                         Item { }
 
                                         Label { text: "创建时间"; color: theme.text2 }
@@ -824,6 +970,19 @@ ApplicationWindow {
                                             enabled: logMode.currentText !== "实时日志"
                                             onClicked: AppController.exportHistory(logMode.currentText, historyKeyword.text, historyFrom.text, historyTo.text, logScope.currentText)
                                         }
+
+                                        Button {
+                                            text: "复制"
+                                            onClicked: {
+                                                logCopyText.text = AppController.logs.dump()
+                                                logCopyDialog.open()
+                                            }
+                                        }
+
+                                        Button {
+                                            text: "复制到剪贴板"
+                                            onClicked: AppController.copyLogsToClipboard()
+                                        }
                                     }
 
                                     ListView {
@@ -843,12 +1002,12 @@ ApplicationWindow {
                                                 text: model.text
                                                 color: theme.text2
                                                 font.pixelSize: 12
-                                                elide: Text.ElideRight
+                                                wrapMode: Text.WordWrap
                                             }
 
                                             MouseArea {
-                                                anchors.fill: parent
                                                 enabled: logMode.currentText === "历史日志" && logScope.currentText === "全局"
+                                                anchors.fill: parent
                                                 cursorShape: Qt.PointingHandCursor
                                                 onClicked: {
                                                     var t = model.text
@@ -877,6 +1036,46 @@ ApplicationWindow {
                             }
                         }
                     }
+                }
+            }
+        }
+
+        Dialog {
+            id: logCopyDialog
+            modal: true
+            title: "复制日志"
+            width: 980
+            height: 640
+            anchors.centerIn: parent
+
+            background: Rectangle {
+                color: theme.card
+                radius: theme.radius
+                border.width: 1
+                border.color: theme.border
+            }
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 12
+                spacing: 10
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+                    Label { text: "提示：鼠标拖拽选择后 Cmd+C 复制"; color: theme.text2 }
+                    Item { Layout.fillWidth: true }
+                    Button { text: "关闭"; onClicked: logCopyDialog.close() }
+                }
+
+                TextArea {
+                    id: logCopyText
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    readOnly: true
+                    selectByMouse: true
+                    wrapMode: TextArea.Wrap
+                    text: ""
                 }
             }
         }

@@ -31,10 +31,13 @@ void LogListModel::clear() {
   endResetModel();
 }
 
+QString LogListModel::dump() const {
+  return m_lines.join(QStringLiteral("\n"));
+}
+
 void LogListModel::appendLine(const QString& line) {
   const int row = m_lines.size();
   beginInsertRows(QModelIndex(), row, row);
   m_lines.push_back(line);
   endInsertRows();
 }
-
