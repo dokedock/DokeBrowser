@@ -1,5 +1,7 @@
 #include "CdpClient.h"
 
+#include "FingerprintMetadata.h"
+
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -71,6 +73,9 @@ void CdpClient::sendToSession(const QString& sessionId, const QString& method, c
 
 QJsonObject CdpClient::buildExtraHeaders() const {
   QJsonObject headers;
+  if (!m_fp.enabled) {
+    return headers;
+  }
   const QString lang = m_fp.language.trimmed();
   if (!lang.isEmpty()) {
     headers.insert(QStringLiteral("Accept-Language"), lang);
@@ -79,6 +84,9 @@ QJsonObject CdpClient::buildExtraHeaders() const {
 }
 
 QString CdpClient::buildInitScript() const {
+  if (!m_fp.enabled) {
+    return {};
+  }
   QString inj;
   const QString lang = m_fp.language.trimmed();
   const QString tz = m_fp.timezone.trimmed();
@@ -99,6 +107,8 @@ QString CdpClient::buildInitScript() const {
     }
   }
   const double dpr = m_fp.deviceScaleFactor > 0 ? m_fp.deviceScaleFactor : 0;
+  const auto uaHints = FingerprintMetadata::buildUaClientHints(m_fp.userAgent, plat);
+  inj += FingerprintMetadata::buildUserAgentDataScript(uaHints);
   if (!lang.isEmpty()) {
     const QString primary = lang.contains('-') ? lang.left(lang.indexOf('-')) : lang;
     const QString langs = (primary.isEmpty() || primary == lang) ? QStringLiteral("['%1']").arg(jsEscape(lang))
@@ -284,7 +294,7 @@ QString CdpClient::buildInitScript() const {
 }
 
 void CdpClient::applyToTarget(const QString& sessionId) {
-  if (!m_fp.timezone.trimmed().isEmpty()) {
+  if (m_fp.enabled && !m_fp.timezone.trimmed().isEmpty()) {
     QJsonObject p;
     p.insert(QStringLiteral("timezoneId"), m_fp.timezone.trimmed());
     sendToSession(sessionId, QStringLiteral("Emulation.setTimezoneOverride"), p);
@@ -299,17 +309,22 @@ void CdpClient::applyToTarget(const QString& sessionId) {
 
   const QString ua = m_fp.userAgent.trimmed();
   const QJsonObject extra = buildExtraHeaders();
-  const bool needNetwork = !ua.isEmpty() || !extra.isEmpty();
+  const bool needNetwork = m_fp.enabled && (!ua.isEmpty() || !extra.isEmpty());
   if (needNetwork) {
     sendToSession(sessionId, QStringLiteral("Network.enable"), QJsonObject{});
   }
-  if (!ua.isEmpty()) {
+  if (m_fp.enabled && !ua.isEmpty()) {
     QJsonObject p;
     p.insert(QStringLiteral("userAgent"), ua);
+    const QJsonObject metadata =
+        FingerprintMetadata::toCdpUserAgentMetadata(FingerprintMetadata::buildUaClientHints(ua, m_fp.platform));
+    if (!metadata.isEmpty()) {
+      p.insert(QStringLiteral("userAgentMetadata"), metadata);
+    }
     sendToSession(sessionId, QStringLiteral("Network.setUserAgentOverride"), p);
   }
 
-  if (m_fp.touchEnabled) {
+  if (m_fp.enabled && m_fp.touchEnabled) {
     QJsonObject p;
     p.insert(QStringLiteral("enabled"), true);
     sendToSession(sessionId, QStringLiteral("Emulation.setTouchEmulationEnabled"), p);
@@ -344,7 +359,7 @@ void CdpClient::applyToTarget(const QString& sessionId) {
       }
     }
   }
-  if (w > 0 && h > 0) {
+  if (m_fp.enabled && w > 0 && h > 0) {
     QJsonObject p;
     p.insert(QStringLiteral("width"), w);
     p.insert(QStringLiteral("height"), h);

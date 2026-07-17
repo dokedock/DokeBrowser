@@ -79,6 +79,27 @@ QString defaultLanguageForCountry(const QString& cc) {
   if (v == QStringLiteral("PT")) return QStringLiteral("pt-PT");
   return {};
 }
+
+QJsonObject parseObjectJson(const QString& json) {
+  const QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8());
+  return doc.isObject() ? doc.object() : QJsonObject();
+}
+
+QString compactObjectJson(const QJsonObject& obj) {
+  return obj.isEmpty() ? QString() : QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
+}
+
+QStringList linesToList(const QString& text) {
+  QStringList out;
+  const auto lines = text.split('\n');
+  for (const auto& line : lines) {
+    const QString v = line.trimmed();
+    if (!v.isEmpty()) {
+      out << v;
+    }
+  }
+  return out;
+}
 }
 
 AppController::AppController(QObject* parent) : QObject(parent) {
@@ -106,6 +127,11 @@ AppController::AppController(QObject* parent) : QObject(parent) {
       emit ipcConnectedChanged();
     }
     appendLogLine(QStringLiteral("ipc_connected=%1").arg(now ? "true" : "false"), QStringLiteral("ipc"));
+    if (now) {
+      QJsonObject msg;
+      msg.insert(QStringLiteral("type"), QStringLiteral("engine.list"));
+      m_ipc->send(msg);
+    }
   });
 
   QObject::connect(m_ipc, &IpcClient::profileStatusReceived, this, [this](const QJsonObject& obj) {
@@ -268,6 +294,27 @@ AppController::AppController(QObject* parent) : QObject(parent) {
       emit selectedVpnStatusChanged();
     }
     persistRunEvent(profileId, QStringLiteral("vpn.status"), status, err);
+  });
+
+  QObject::connect(m_ipc, &IpcClient::engineListReceived, this, [this](const QJsonObject& obj) {
+    m_engineStatusById.clear();
+    const QJsonArray engines = obj.value(QStringLiteral("engines")).toArray();
+    for (const auto& value : engines) {
+      const QJsonObject engine = value.toObject();
+      const QString id = engine.value(QStringLiteral("id")).toString().trimmed();
+      if (id.isEmpty()) {
+        continue;
+      }
+      const bool available = engine.value(QStringLiteral("available")).toBool(false);
+      if (available) {
+        const QString executable = engine.value(QStringLiteral("executable")).toString();
+        m_engineStatusById.insert(id, executable.isEmpty() ? QStringLiteral("可用") : QStringLiteral("可用: %1").arg(executable));
+      } else {
+        const QString error = engine.value(QStringLiteral("error")).toString(QStringLiteral("not_available"));
+        m_engineStatusById.insert(id, QStringLiteral("不可用: %1").arg(error));
+      }
+    }
+    emit selectedProfileChanged();
   });
 
   loadProfiles();
@@ -636,6 +683,279 @@ void AppController::setSelectedProfileDataDir(const QString& value) {
     return;
   }
   it.dataDir = v;
+  updateSelectedProfileItem(it);
+}
+
+QString AppController::selectedProfileBrowserEngine() const {
+  if (!hasSelectedProfile()) {
+    return {};
+  }
+  const QString v = m_profiles->items().at(m_selectedProfileIndex).browserEngine.trimmed();
+  return v.isEmpty() ? QStringLiteral("system_chrome") : v;
+}
+
+void AppController::setSelectedProfileBrowserEngine(const QString& value) {
+  if (!hasSelectedProfile()) {
+    return;
+  }
+  auto it = selectedProfileItem();
+  QString v = value.trimmed();
+  if (v.isEmpty()) {
+    v = QStringLiteral("system_chrome");
+  }
+  if (v != QStringLiteral("system_chrome") && v != QStringLiteral("doke_chromium") && v != QStringLiteral("cef")) {
+    appendLogLine(QStringLiteral("browser_engine_invalid: %1").arg(v), QStringLiteral("profile"), it.id);
+    return;
+  }
+  if (it.browserEngine == v) {
+    return;
+  }
+  it.browserEngine = v;
+  updateSelectedProfileItem(it);
+}
+
+QString AppController::selectedProfileBrowserEngineStatus() const {
+  if (!hasSelectedProfile()) {
+    return {};
+  }
+  const QString engine = selectedProfileBrowserEngine();
+  return m_engineStatusById.value(engine, QStringLiteral("未检测"));
+}
+
+QString AppController::selectedProfileEngineConfigJson() const {
+  if (!hasSelectedProfile()) {
+    return {};
+  }
+  return m_profiles->items().at(m_selectedProfileIndex).engineConfigJson;
+}
+
+void AppController::setSelectedProfileEngineConfigJson(const QString& value) {
+  if (!hasSelectedProfile()) {
+    return;
+  }
+  auto it = selectedProfileItem();
+  if (it.engineConfigJson == value) {
+    return;
+  }
+  it.engineConfigJson = value;
+  updateSelectedProfileItem(it);
+}
+
+QString AppController::selectedProfileDokeExecutable() const {
+  if (!hasSelectedProfile()) {
+    return {};
+  }
+  const QJsonObject config = parseObjectJson(m_profiles->items().at(m_selectedProfileIndex).engineConfigJson);
+  const QString executable = config.value(QStringLiteral("executable")).toString().trimmed();
+  return executable.isEmpty() ? config.value(QStringLiteral("binary_path")).toString().trimmed() : executable;
+}
+
+void AppController::setSelectedProfileDokeExecutable(const QString& value) {
+  if (!hasSelectedProfile()) {
+    return;
+  }
+  auto it = selectedProfileItem();
+  QJsonObject config = parseObjectJson(it.engineConfigJson);
+  const QString v = value.trimmed();
+  if (v.isEmpty()) {
+    config.remove(QStringLiteral("executable"));
+    config.remove(QStringLiteral("binary_path"));
+  } else {
+    config.insert(QStringLiteral("executable"), v);
+    config.remove(QStringLiteral("binary_path"));
+  }
+  const QString next = compactObjectJson(config);
+  if (it.engineConfigJson == next) {
+    return;
+  }
+  it.engineConfigJson = next;
+  updateSelectedProfileItem(it);
+}
+
+QString AppController::selectedProfileDokeExtraArgs() const {
+  if (!hasSelectedProfile()) {
+    return {};
+  }
+  const QJsonObject config = parseObjectJson(m_profiles->items().at(m_selectedProfileIndex).engineConfigJson);
+  QStringList args;
+  const QJsonArray values = config.value(QStringLiteral("extra_args")).toArray();
+  for (const auto& value : values) {
+    const QString arg = value.toString().trimmed();
+    if (!arg.isEmpty()) {
+      args << arg;
+    }
+  }
+  return args.join(QLatin1Char('\n'));
+}
+
+void AppController::setSelectedProfileDokeExtraArgs(const QString& value) {
+  if (!hasSelectedProfile()) {
+    return;
+  }
+  auto it = selectedProfileItem();
+  QJsonObject config = parseObjectJson(it.engineConfigJson);
+  QJsonArray args;
+  for (const auto& arg : linesToList(value)) {
+    args.push_back(arg);
+  }
+  if (args.isEmpty()) {
+    config.remove(QStringLiteral("extra_args"));
+  } else {
+    config.insert(QStringLiteral("extra_args"), args);
+  }
+  const QString next = compactObjectJson(config);
+  if (it.engineConfigJson == next) {
+    return;
+  }
+  it.engineConfigJson = next;
+  updateSelectedProfileItem(it);
+}
+
+static bool selectedFeatureEnabled(const ProfileListModel::ProfileItem& item, const QString& key) {
+  const QJsonObject config = parseObjectJson(item.engineConfigJson);
+  return config.value(QStringLiteral("features")).toObject().value(key).toBool(false);
+}
+
+void setSelectedFeature(ProfileListModel::ProfileItem& item, const QString& key, bool value) {
+  QJsonObject config = parseObjectJson(item.engineConfigJson);
+  QJsonObject features = config.value(QStringLiteral("features")).toObject();
+  if (value) {
+    features.insert(key, true);
+  } else {
+    features.remove(key);
+  }
+  if (features.isEmpty()) {
+    config.remove(QStringLiteral("features"));
+  } else {
+    config.insert(QStringLiteral("features"), features);
+  }
+  item.engineConfigJson = compactObjectJson(config);
+}
+
+bool AppController::selectedProfileDokeNativeFingerprint() const {
+  return hasSelectedProfile() && selectedFeatureEnabled(m_profiles->items().at(m_selectedProfileIndex), QStringLiteral("native_fingerprint"));
+}
+
+void AppController::setSelectedProfileDokeNativeFingerprint(bool value) {
+  if (!hasSelectedProfile()) return;
+  auto it = selectedProfileItem();
+  const QString before = it.engineConfigJson;
+  setSelectedFeature(it, QStringLiteral("native_fingerprint"), value);
+  if (before != it.engineConfigJson) updateSelectedProfileItem(it);
+}
+
+bool AppController::selectedProfileDokeNativeProxy() const {
+  return hasSelectedProfile() && selectedFeatureEnabled(m_profiles->items().at(m_selectedProfileIndex), QStringLiteral("native_proxy"));
+}
+
+void AppController::setSelectedProfileDokeNativeProxy(bool value) {
+  if (!hasSelectedProfile()) return;
+  auto it = selectedProfileItem();
+  const QString before = it.engineConfigJson;
+  setSelectedFeature(it, QStringLiteral("native_proxy"), value);
+  if (before != it.engineConfigJson) updateSelectedProfileItem(it);
+}
+
+bool AppController::selectedProfileDokeNativeGeoip() const {
+  return hasSelectedProfile() && selectedFeatureEnabled(m_profiles->items().at(m_selectedProfileIndex), QStringLiteral("native_geoip"));
+}
+
+void AppController::setSelectedProfileDokeNativeGeoip(bool value) {
+  if (!hasSelectedProfile()) return;
+  auto it = selectedProfileItem();
+  const QString before = it.engineConfigJson;
+  setSelectedFeature(it, QStringLiteral("native_geoip"), value);
+  if (before != it.engineConfigJson) updateSelectedProfileItem(it);
+}
+
+bool AppController::selectedProfileDokeNativeHumanize() const {
+  return hasSelectedProfile() && selectedFeatureEnabled(m_profiles->items().at(m_selectedProfileIndex), QStringLiteral("native_humanize"));
+}
+
+void AppController::setSelectedProfileDokeNativeHumanize(bool value) {
+  if (!hasSelectedProfile()) return;
+  auto it = selectedProfileItem();
+  const QString before = it.engineConfigJson;
+  setSelectedFeature(it, QStringLiteral("native_humanize"), value);
+  if (before != it.engineConfigJson) updateSelectedProfileItem(it);
+}
+
+QString AppController::selectedProfileFingerprintSeed() const {
+  if (!hasSelectedProfile()) {
+    return {};
+  }
+  const auto& it = m_profiles->items().at(m_selectedProfileIndex);
+  return it.fingerprintSeed.trimmed().isEmpty() ? it.id : it.fingerprintSeed;
+}
+
+void AppController::setSelectedProfileFingerprintSeed(const QString& value) {
+  if (!hasSelectedProfile()) {
+    return;
+  }
+  auto it = selectedProfileItem();
+  const QString v = value.trimmed().isEmpty() ? it.id : value.trimmed();
+  if (it.fingerprintSeed == v) {
+    return;
+  }
+  it.fingerprintSeed = v;
+  updateSelectedProfileItem(it);
+}
+
+QString AppController::selectedProfileStartUrl() const {
+  if (!hasSelectedProfile()) {
+    return {};
+  }
+  return m_profiles->items().at(m_selectedProfileIndex).startUrl;
+}
+
+void AppController::setSelectedProfileStartUrl(const QString& value) {
+  if (!hasSelectedProfile()) {
+    return;
+  }
+  auto it = selectedProfileItem();
+  const QString v = value.trimmed();
+  if (it.startUrl == v) {
+    return;
+  }
+  it.startUrl = v;
+  updateSelectedProfileItem(it);
+}
+
+bool AppController::selectedProfileHumanizeEnabled() const {
+  if (!hasSelectedProfile()) {
+    return false;
+  }
+  return m_profiles->items().at(m_selectedProfileIndex).humanizeEnabled;
+}
+
+void AppController::setSelectedProfileHumanizeEnabled(bool value) {
+  if (!hasSelectedProfile()) {
+    return;
+  }
+  auto it = selectedProfileItem();
+  if (it.humanizeEnabled == value) {
+    return;
+  }
+  it.humanizeEnabled = value;
+  updateSelectedProfileItem(it);
+}
+
+bool AppController::selectedProfileGeoipEnabled() const {
+  if (!hasSelectedProfile()) {
+    return false;
+  }
+  return m_profiles->items().at(m_selectedProfileIndex).geoipEnabled;
+}
+
+void AppController::setSelectedProfileGeoipEnabled(bool value) {
+  if (!hasSelectedProfile()) {
+    return;
+  }
+  auto it = selectedProfileItem();
+  if (it.geoipEnabled == value) {
+    return;
+  }
+  it.geoipEnabled = value;
   updateSelectedProfileItem(it);
 }
 
@@ -1187,6 +1507,14 @@ void AppController::runCheckedProfiles() {
       msg.insert(QStringLiteral("profile_id"), it.id);
       msg.insert(QStringLiteral("profile_name"), it.name);
       msg.insert(QStringLiteral("data_dir"), it.dataDir);
+      msg.insert(QStringLiteral("browser_engine"), it.browserEngine.trimmed().isEmpty() ? QStringLiteral("system_chrome") : it.browserEngine);
+      msg.insert(QStringLiteral("engine_config_json"), it.engineConfigJson);
+      msg.insert(QStringLiteral("fingerprint_seed"), it.fingerprintSeed.trimmed().isEmpty() ? it.id : it.fingerprintSeed.trimmed());
+      msg.insert(QStringLiteral("url"), it.startUrl);
+      QJsonObject engineOptions;
+      engineOptions.insert(QStringLiteral("humanize"), it.humanizeEnabled);
+      engineOptions.insert(QStringLiteral("geoip"), it.geoipEnabled);
+      msg.insert(QStringLiteral("engine_options"), engineOptions);
       msg.insert(QStringLiteral("fingerprint_mode"), it.fingerprintMode);
       msg.insert(QStringLiteral("language"), it.language);
       msg.insert(QStringLiteral("user_agent"), it.userAgent);
@@ -1900,6 +2228,11 @@ void AppController::createProfile() {
   item.remark = QStringLiteral("");
   item.status = QStringLiteral("stopped");
   item.createdAtMs = QDateTime::currentMSecsSinceEpoch();
+  item.browserEngine = QStringLiteral("system_chrome");
+  item.fingerprintSeed = item.id;
+  item.startUrl = QString();
+  item.humanizeEnabled = false;
+  item.geoipEnabled = true;
   item.fingerprintMode = QStringLiteral("follow_ip");
   item.language = QStringLiteral("zh-CN");
   item.userAgent = QString();
@@ -1979,6 +2312,14 @@ void AppController::runSelectedProfile() {
   msg.insert(QStringLiteral("profile_id"), it.id);
   msg.insert(QStringLiteral("profile_name"), it.name);
   msg.insert(QStringLiteral("data_dir"), it.dataDir);
+  msg.insert(QStringLiteral("browser_engine"), it.browserEngine.trimmed().isEmpty() ? QStringLiteral("system_chrome") : it.browserEngine);
+  msg.insert(QStringLiteral("engine_config_json"), it.engineConfigJson);
+  msg.insert(QStringLiteral("fingerprint_seed"), it.fingerprintSeed.trimmed().isEmpty() ? it.id : it.fingerprintSeed.trimmed());
+  msg.insert(QStringLiteral("url"), it.startUrl);
+  QJsonObject engineOptions;
+  engineOptions.insert(QStringLiteral("humanize"), it.humanizeEnabled);
+  engineOptions.insert(QStringLiteral("geoip"), it.geoipEnabled);
+  msg.insert(QStringLiteral("engine_options"), engineOptions);
   msg.insert(QStringLiteral("fingerprint_mode"), it.fingerprintMode);
   msg.insert(QStringLiteral("language"), it.language);
   msg.insert(QStringLiteral("user_agent"), it.userAgent);
@@ -2547,6 +2888,11 @@ void AppController::loadProfiles() {
     item.group = QStringLiteral("默认分组");
     item.status = QStringLiteral("stopped");
     item.createdAtMs = QDateTime::currentMSecsSinceEpoch();
+    item.browserEngine = QStringLiteral("system_chrome");
+    item.fingerprintSeed = item.id;
+    item.startUrl = QString();
+    item.humanizeEnabled = false;
+    item.geoipEnabled = true;
     item.fingerprintMode = QStringLiteral("follow_ip");
     item.language = QStringLiteral("zh-CN");
     item.userAgent = QString();
@@ -2615,6 +2961,12 @@ void AppController::loadProfiles() {
           item.createdAtMs = static_cast<qint64>(o.value(QStringLiteral("created_at_ms")).toDouble(0));
           item.lastOpenAtMs = static_cast<qint64>(o.value(QStringLiteral("last_open_at_ms")).toDouble(0));
           item.dataDir = o.value(QStringLiteral("data_dir")).toString();
+          item.browserEngine = o.value(QStringLiteral("browser_engine")).toString(QStringLiteral("system_chrome"));
+          item.engineConfigJson = o.value(QStringLiteral("engine_config_json")).toString();
+          item.fingerprintSeed = o.value(QStringLiteral("fingerprint_seed")).toString(item.id);
+          item.startUrl = o.value(QStringLiteral("start_url")).toString();
+          item.humanizeEnabled = o.value(QStringLiteral("humanize_enabled")).toBool(false);
+          item.geoipEnabled = o.value(QStringLiteral("geoip_enabled")).toBool(true);
           item.fingerprintMode = o.value(QStringLiteral("fingerprint_mode")).toString();
           if (item.fingerprintMode.isEmpty()) {
             item.fingerprintMode = o.value(QStringLiteral("fingerprintMode")).toString();

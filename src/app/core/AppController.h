@@ -44,6 +44,31 @@ class AppController : public QObject {
 
   Q_PROPERTY(QString selectedProfileDataDir READ selectedProfileDataDir WRITE setSelectedProfileDataDir NOTIFY
                  selectedProfileChanged)
+  Q_PROPERTY(QString selectedProfileBrowserEngine READ selectedProfileBrowserEngine WRITE setSelectedProfileBrowserEngine NOTIFY
+                 selectedProfileChanged)
+  Q_PROPERTY(QString selectedProfileBrowserEngineStatus READ selectedProfileBrowserEngineStatus NOTIFY selectedProfileChanged)
+  Q_PROPERTY(QString selectedProfileEngineConfigJson READ selectedProfileEngineConfigJson WRITE setSelectedProfileEngineConfigJson NOTIFY
+                 selectedProfileChanged)
+  Q_PROPERTY(QString selectedProfileDokeExecutable READ selectedProfileDokeExecutable WRITE setSelectedProfileDokeExecutable NOTIFY
+                 selectedProfileChanged)
+  Q_PROPERTY(QString selectedProfileDokeExtraArgs READ selectedProfileDokeExtraArgs WRITE setSelectedProfileDokeExtraArgs NOTIFY
+                 selectedProfileChanged)
+  Q_PROPERTY(bool selectedProfileDokeNativeFingerprint READ selectedProfileDokeNativeFingerprint WRITE
+                 setSelectedProfileDokeNativeFingerprint NOTIFY selectedProfileChanged)
+  Q_PROPERTY(bool selectedProfileDokeNativeProxy READ selectedProfileDokeNativeProxy WRITE setSelectedProfileDokeNativeProxy NOTIFY
+                 selectedProfileChanged)
+  Q_PROPERTY(bool selectedProfileDokeNativeGeoip READ selectedProfileDokeNativeGeoip WRITE setSelectedProfileDokeNativeGeoip NOTIFY
+                 selectedProfileChanged)
+  Q_PROPERTY(bool selectedProfileDokeNativeHumanize READ selectedProfileDokeNativeHumanize WRITE setSelectedProfileDokeNativeHumanize NOTIFY
+                 selectedProfileChanged)
+  Q_PROPERTY(QString selectedProfileFingerprintSeed READ selectedProfileFingerprintSeed WRITE setSelectedProfileFingerprintSeed NOTIFY
+                 selectedProfileChanged)
+  Q_PROPERTY(QString selectedProfileStartUrl READ selectedProfileStartUrl WRITE setSelectedProfileStartUrl NOTIFY
+                 selectedProfileChanged)
+  Q_PROPERTY(bool selectedProfileHumanizeEnabled READ selectedProfileHumanizeEnabled WRITE setSelectedProfileHumanizeEnabled NOTIFY
+                 selectedProfileChanged)
+  Q_PROPERTY(bool selectedProfileGeoipEnabled READ selectedProfileGeoipEnabled WRITE setSelectedProfileGeoipEnabled NOTIFY
+                 selectedProfileChanged)
   Q_PROPERTY(QString selectedProfileFingerprintMode READ selectedProfileFingerprintMode WRITE setSelectedProfileFingerprintMode NOTIFY
                  selectedProfileChanged)
   Q_PROPERTY(QString selectedProfileLanguage READ selectedProfileLanguage WRITE setSelectedProfileLanguage NOTIFY
@@ -118,6 +143,31 @@ public:
 
   QString selectedProfileDataDir() const;
   void setSelectedProfileDataDir(const QString& value);
+  QString selectedProfileBrowserEngine() const;
+  void setSelectedProfileBrowserEngine(const QString& value);
+  QString selectedProfileBrowserEngineStatus() const;
+  QString selectedProfileEngineConfigJson() const;
+  void setSelectedProfileEngineConfigJson(const QString& value);
+  QString selectedProfileDokeExecutable() const;
+  void setSelectedProfileDokeExecutable(const QString& value);
+  QString selectedProfileDokeExtraArgs() const;
+  void setSelectedProfileDokeExtraArgs(const QString& value);
+  bool selectedProfileDokeNativeFingerprint() const;
+  void setSelectedProfileDokeNativeFingerprint(bool value);
+  bool selectedProfileDokeNativeProxy() const;
+  void setSelectedProfileDokeNativeProxy(bool value);
+  bool selectedProfileDokeNativeGeoip() const;
+  void setSelectedProfileDokeNativeGeoip(bool value);
+  bool selectedProfileDokeNativeHumanize() const;
+  void setSelectedProfileDokeNativeHumanize(bool value);
+  QString selectedProfileFingerprintSeed() const;
+  void setSelectedProfileFingerprintSeed(const QString& value);
+  QString selectedProfileStartUrl() const;
+  void setSelectedProfileStartUrl(const QString& value);
+  bool selectedProfileHumanizeEnabled() const;
+  void setSelectedProfileHumanizeEnabled(bool value);
+  bool selectedProfileGeoipEnabled() const;
+  void setSelectedProfileGeoipEnabled(bool value);
   QString selectedProfileFingerprintMode() const;
   void setSelectedProfileFingerprintMode(const QString& value);
   QString selectedProfileLanguage() const;
@@ -321,5 +371,6 @@ private:
   QTimer* m_proxyPoolBatchTimer = nullptr;
   bool m_proxyPoolAssignPending = false;
   QStringList m_proxyPoolAssignPendingProfileIds;
+  QHash<QString, QString> m_engineStatusById;
   QHash<QString, QString> m_vpnStatusByProfileId;
 };

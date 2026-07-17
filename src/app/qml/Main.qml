@@ -639,6 +639,122 @@ ApplicationWindow {
                                             onEditingFinished: AppController.selectedProfileDataDir = text
                                         }
 
+                                        Label { text: "浏览器内核"; color: theme.text2 }
+                                        ComboBox {
+                                            Layout.fillWidth: true
+                                            enabled: AppController.selectedProfileIndex >= 0
+                                            model: ["system_chrome", "doke_chromium"]
+                                            currentIndex: Math.max(0, model.indexOf(AppController.selectedProfileBrowserEngine))
+                                            onActivated: AppController.selectedProfileBrowserEngine = currentText
+                                        }
+                                        Label { text: "GeoIP"; color: theme.text2 }
+                                        CheckBox {
+                                            Layout.alignment: Qt.AlignVCenter
+                                            checked: AppController.selectedProfileGeoipEnabled
+                                            enabled: AppController.selectedProfileIndex >= 0
+                                            onToggled: AppController.selectedProfileGeoipEnabled = checked
+                                        }
+
+                                        Label { text: "内核状态"; color: theme.text2 }
+                                        TextField {
+                                            Layout.fillWidth: true
+                                            Layout.columnSpan: 3
+                                            readOnly: true
+                                            text: AppController.selectedProfileBrowserEngineStatus
+                                        }
+
+                                        Label {
+                                            text: "Doke路径"
+                                            color: theme.text2
+                                            visible: AppController.selectedProfileBrowserEngine === "doke_chromium"
+                                        }
+                                        TextField {
+                                            Layout.fillWidth: true
+                                            Layout.columnSpan: 3
+                                            visible: AppController.selectedProfileBrowserEngine === "doke_chromium"
+                                            text: AppController.selectedProfileDokeExecutable
+                                            enabled: AppController.selectedProfileIndex >= 0
+                                            placeholderText: "/path/to/doke_chromium"
+                                            onEditingFinished: AppController.selectedProfileDokeExecutable = text
+                                        }
+
+                                        Label {
+                                            text: "Doke参数"
+                                            color: theme.text2
+                                            visible: AppController.selectedProfileBrowserEngine === "doke_chromium"
+                                        }
+                                        TextArea {
+                                            Layout.fillWidth: true
+                                            Layout.columnSpan: 3
+                                            Layout.preferredHeight: 54
+                                            visible: AppController.selectedProfileBrowserEngine === "doke_chromium"
+                                            text: AppController.selectedProfileDokeExtraArgs
+                                            enabled: AppController.selectedProfileIndex >= 0
+                                            wrapMode: TextArea.NoWrap
+                                            placeholderText: "--flag=value"
+                                            onActiveFocusChanged: if (!activeFocus) AppController.selectedProfileDokeExtraArgs = text
+                                        }
+
+                                        Label {
+                                            text: "原生补丁"
+                                            color: theme.text2
+                                            visible: AppController.selectedProfileBrowserEngine === "doke_chromium"
+                                        }
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            Layout.columnSpan: 3
+                                            visible: AppController.selectedProfileBrowserEngine === "doke_chromium"
+                                            CheckBox {
+                                                text: "指纹"
+                                                checked: AppController.selectedProfileDokeNativeFingerprint
+                                                enabled: AppController.selectedProfileIndex >= 0
+                                                onToggled: AppController.selectedProfileDokeNativeFingerprint = checked
+                                            }
+                                            CheckBox {
+                                                text: "代理"
+                                                checked: AppController.selectedProfileDokeNativeProxy
+                                                enabled: AppController.selectedProfileIndex >= 0
+                                                onToggled: AppController.selectedProfileDokeNativeProxy = checked
+                                            }
+                                            CheckBox {
+                                                text: "GeoIP"
+                                                checked: AppController.selectedProfileDokeNativeGeoip
+                                                enabled: AppController.selectedProfileIndex >= 0
+                                                onToggled: AppController.selectedProfileDokeNativeGeoip = checked
+                                            }
+                                            CheckBox {
+                                                text: "拟真"
+                                                checked: AppController.selectedProfileDokeNativeHumanize
+                                                enabled: AppController.selectedProfileIndex >= 0
+                                                onToggled: AppController.selectedProfileDokeNativeHumanize = checked
+                                            }
+                                        }
+
+                                        Label { text: "指纹Seed"; color: theme.text2 }
+                                        TextField {
+                                            Layout.fillWidth: true
+                                            text: AppController.selectedProfileFingerprintSeed
+                                            enabled: AppController.selectedProfileIndex >= 0
+                                            onEditingFinished: AppController.selectedProfileFingerprintSeed = text
+                                        }
+                                        Label { text: "拟真行为"; color: theme.text2 }
+                                        CheckBox {
+                                            Layout.alignment: Qt.AlignVCenter
+                                            checked: AppController.selectedProfileHumanizeEnabled
+                                            enabled: AppController.selectedProfileIndex >= 0
+                                            onToggled: AppController.selectedProfileHumanizeEnabled = checked
+                                        }
+
+                                        Label { text: "启动URL"; color: theme.text2 }
+                                        TextField {
+                                            Layout.fillWidth: true
+                                            Layout.columnSpan: 3
+                                            text: AppController.selectedProfileStartUrl
+                                            enabled: AppController.selectedProfileIndex >= 0
+                                            placeholderText: "about:blank"
+                                            onEditingFinished: AppController.selectedProfileStartUrl = text
+                                        }
+
                                         Label { text: "指纹策略"; color: theme.text2 }
                                         ComboBox {
                                             Layout.fillWidth: true

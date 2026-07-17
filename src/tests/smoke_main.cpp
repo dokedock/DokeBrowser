@@ -5,6 +5,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QEventLoop>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocalSocket>
@@ -109,6 +110,33 @@ int main(int argc, char* argv[]) {
     agent.waitForFinished(2000);
     qCritical("hello_ack_timeout");
     return 5;
+  }
+
+  QJsonObject engineList;
+  engineList.insert(QStringLiteral("type"), QStringLiteral("engine.list"));
+  framed.send(engineList);
+
+  const auto engines = waitForType(&framed, QStringLiteral("engine.list.result"), 3000);
+  if (!engines.ok || !engines.obj.value(QStringLiteral("engines")).isArray()) {
+    agent.kill();
+    agent.waitForFinished(2000);
+    qCritical("engine_list_timeout");
+    return 7;
+  }
+  const QJsonArray engineArray = engines.obj.value(QStringLiteral("engines")).toArray();
+  bool hasSystemChrome = false;
+  bool hasDokeChromium = false;
+  for (const auto& v : engineArray) {
+    const QJsonObject e = v.toObject();
+    const QString id = e.value(QStringLiteral("id")).toString();
+    hasSystemChrome = hasSystemChrome || id == QStringLiteral("system_chrome");
+    hasDokeChromium = hasDokeChromium || id == QStringLiteral("doke_chromium");
+  }
+  if (!hasSystemChrome || !hasDokeChromium) {
+    agent.kill();
+    agent.waitForFinished(2000);
+    qCritical("engine_list_missing_expected_ids");
+    return 8;
   }
 
   QJsonObject proxy;

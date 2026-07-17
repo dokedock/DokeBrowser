@@ -105,6 +105,10 @@ void IpcClient::onJsonReceived(const QJsonObject& obj) {
   }
   if (type == QStringLiteral("vpn.status")) {
     emit vpnStatusReceived(obj);
+    return;
+  }
+  if (type == QStringLiteral("engine.list.result")) {
+    emit engineListReceived(obj);
   }
 }
 

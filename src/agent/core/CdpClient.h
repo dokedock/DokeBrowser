@@ -13,6 +13,7 @@ class CdpClient : public QObject {
 
 public:
   struct Fingerprint {
+    bool enabled = true;
     QString language;
     QString userAgent;
     QString platform;

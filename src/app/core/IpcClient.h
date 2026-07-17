@@ -29,6 +29,7 @@ signals:
   void proxyTestResultReceived(const QJsonObject& result);
   void proxyPoolTestResultReceived(const QJsonObject& result);
   void vpnStatusReceived(const QJsonObject& result);
+  void engineListReceived(const QJsonObject& result);
 
 private:
   void tryConnectOnce();

@@ -114,6 +114,12 @@ bool ProfileRepository::ensureSchema(QString* error) {
                               "created_at_ms INTEGER NOT NULL DEFAULT 0,"
                               "last_open_at_ms INTEGER NOT NULL DEFAULT 0,"
                               "data_dir TEXT NOT NULL DEFAULT '',"
+                              "browser_engine TEXT NOT NULL DEFAULT 'system_chrome',"
+                              "engine_config_json TEXT NOT NULL DEFAULT '',"
+                              "fingerprint_seed TEXT NOT NULL DEFAULT '',"
+                              "start_url TEXT NOT NULL DEFAULT '',"
+                              "humanize_enabled INTEGER NOT NULL DEFAULT 0,"
+                              "geoip_enabled INTEGER NOT NULL DEFAULT 0,"
                               "fingerprint_mode TEXT NOT NULL DEFAULT 'follow_ip',"
                               "language TEXT NOT NULL DEFAULT 'zh-CN',"
                               "user_agent TEXT NOT NULL DEFAULT '',"
@@ -148,6 +154,16 @@ bool ProfileRepository::ensureSchema(QString* error) {
     const QVector<AddCol> need = {
         {QStringLiteral("fingerprint_mode"),
          QStringLiteral("ALTER TABLE profiles ADD COLUMN fingerprint_mode TEXT NOT NULL DEFAULT 'follow_ip';")},
+        {QStringLiteral("browser_engine"),
+         QStringLiteral("ALTER TABLE profiles ADD COLUMN browser_engine TEXT NOT NULL DEFAULT 'system_chrome';")},
+        {QStringLiteral("engine_config_json"),
+         QStringLiteral("ALTER TABLE profiles ADD COLUMN engine_config_json TEXT NOT NULL DEFAULT '';")},
+        {QStringLiteral("fingerprint_seed"),
+         QStringLiteral("ALTER TABLE profiles ADD COLUMN fingerprint_seed TEXT NOT NULL DEFAULT '';")},
+        {QStringLiteral("start_url"), QStringLiteral("ALTER TABLE profiles ADD COLUMN start_url TEXT NOT NULL DEFAULT '';")},
+        {QStringLiteral("humanize_enabled"),
+         QStringLiteral("ALTER TABLE profiles ADD COLUMN humanize_enabled INTEGER NOT NULL DEFAULT 0;")},
+        {QStringLiteral("geoip_enabled"), QStringLiteral("ALTER TABLE profiles ADD COLUMN geoip_enabled INTEGER NOT NULL DEFAULT 0;")},
         {QStringLiteral("user_agent"), QStringLiteral("ALTER TABLE profiles ADD COLUMN user_agent TEXT NOT NULL DEFAULT '';")},
         {QStringLiteral("platform"), QStringLiteral("ALTER TABLE profiles ADD COLUMN platform TEXT NOT NULL DEFAULT '';")},
         {QStringLiteral("hardware_concurrency"),
@@ -334,6 +350,7 @@ QVector<ProfileListModel::ProfileItem> ProfileRepository::loadAll(QString* error
   q.prepare(QStringLiteral(
       "SELECT "
       "p.id, p.name, p.group_name, p.remark, p.status, p.created_at_ms, p.last_open_at_ms, p.data_dir, "
+      "p.browser_engine, p.engine_config_json, p.fingerprint_seed, p.start_url, p.humanize_enabled, p.geoip_enabled, "
       "p.fingerprint_mode, p.language, p.user_agent, p.platform, p.hardware_concurrency, p.device_memory_gb, p.device_scale_factor, "
       "p.timezone, p.resolution, p.touch_enabled, p.geo_enabled, p.geo_latitude, p.geo_longitude, p.geo_accuracy, "
       "pc.enabled, pc.type, pc.host, pc.port, pc.username, pc.password, "
@@ -360,16 +377,28 @@ QVector<ProfileListModel::ProfileItem> ProfileRepository::loadAll(QString* error
     it.createdAtMs = q.value(5).toLongLong();
     it.lastOpenAtMs = q.value(6).toLongLong();
     it.dataDir = q.value(7).toString();
-    it.fingerprintMode = q.value(8).toString();
+    it.browserEngine = q.value(8).toString().trimmed();
+    if (it.browserEngine.isEmpty()) {
+      it.browserEngine = QStringLiteral("system_chrome");
+    }
+    it.engineConfigJson = q.value(9).toString();
+    it.fingerprintSeed = q.value(10).toString().trimmed();
+    if (it.fingerprintSeed.isEmpty()) {
+      it.fingerprintSeed = it.id;
+    }
+    it.startUrl = q.value(11).toString().trimmed();
+    it.humanizeEnabled = q.value(12).toInt() != 0;
+    it.geoipEnabled = q.value(13).toInt() != 0;
+    it.fingerprintMode = q.value(14).toString();
     if (it.fingerprintMode.isEmpty()) {
       it.fingerprintMode = QStringLiteral("follow_ip");
     }
-    it.language = q.value(9).toString();
-    it.userAgent = q.value(10).toString();
-    it.platform = q.value(11).toString();
-    it.hardwareConcurrency = q.value(12).toInt();
-    it.deviceMemoryGb = q.value(13).toInt();
-    it.deviceScaleFactor = q.value(14).toDouble();
+    it.language = q.value(15).toString();
+    it.userAgent = q.value(16).toString();
+    it.platform = q.value(17).toString();
+    it.hardwareConcurrency = q.value(18).toInt();
+    it.deviceMemoryGb = q.value(19).toInt();
+    it.deviceScaleFactor = q.value(20).toDouble();
     if (it.platform.isEmpty()) {
 #if defined(Q_OS_MAC)
       it.platform = QStringLiteral("MacIntel");
@@ -388,29 +417,29 @@ QVector<ProfileListModel::ProfileItem> ProfileRepository::loadAll(QString* error
     if (it.deviceScaleFactor <= 0) {
       it.deviceScaleFactor = 1.0;
     }
-    it.timezone = q.value(15).toString();
-    it.resolution = q.value(16).toString();
-    it.touchEnabled = q.value(17).toInt() != 0;
-    it.geoEnabled = q.value(18).toInt() != 0;
-    it.geoLatitude = q.value(19).toDouble();
-    it.geoLongitude = q.value(20).toDouble();
-    it.geoAccuracy = q.value(21).toDouble();
+    it.timezone = q.value(21).toString();
+    it.resolution = q.value(22).toString();
+    it.touchEnabled = q.value(23).toInt() != 0;
+    it.geoEnabled = q.value(24).toInt() != 0;
+    it.geoLatitude = q.value(25).toDouble();
+    it.geoLongitude = q.value(26).toDouble();
+    it.geoAccuracy = q.value(27).toDouble();
 
-    it.proxyEnabled = q.value(22).toInt() != 0;
-    it.proxyType = q.value(23).toString();
-    it.proxyHost = q.value(24).toString();
-    it.proxyPort = q.value(25).toInt();
-    it.proxyUsername = q.value(26).toString();
-    it.proxyPassword = q.value(27).toString();
+    it.proxyEnabled = q.value(28).toInt() != 0;
+    it.proxyType = q.value(29).toString();
+    it.proxyHost = q.value(30).toString();
+    it.proxyPort = q.value(31).toInt();
+    it.proxyUsername = q.value(32).toString();
+    it.proxyPassword = q.value(33).toString();
 
-    it.vpnEnabled = q.value(28).toInt() != 0;
-    it.openvpnExe = q.value(29).toString();
-    it.openvpnConfig = q.value(30).toString();
-    it.openvpnUseSocks = q.value(31).toInt() != 0;
-    it.openvpnSocksHost = q.value(32).toString();
-    it.openvpnSocksPort = q.value(33).toInt();
-    it.openvpnSocksUsername = q.value(34).toString();
-    it.openvpnSocksPassword = q.value(35).toString();
+    it.vpnEnabled = q.value(34).toInt() != 0;
+    it.openvpnExe = q.value(35).toString();
+    it.openvpnConfig = q.value(36).toString();
+    it.openvpnUseSocks = q.value(37).toInt() != 0;
+    it.openvpnSocksHost = q.value(38).toString();
+    it.openvpnSocksPort = q.value(39).toInt();
+    it.openvpnSocksUsername = q.value(40).toString();
+    it.openvpnSocksPassword = q.value(41).toString();
 
     out.push_back(it);
   }
@@ -434,13 +463,17 @@ bool ProfileRepository::upsert(const ProfileListModel::ProfileItem& item, QStrin
   QSqlQuery p(db);
   p.prepare(QStringLiteral(
       "INSERT INTO profiles (id, name, group_name, remark, status, created_at_ms, last_open_at_ms, data_dir, fingerprint_mode, "
+      "browser_engine, engine_config_json, fingerprint_seed, start_url, humanize_enabled, geoip_enabled, "
       "language, user_agent, platform, hardware_concurrency, device_memory_gb, device_scale_factor, timezone, resolution, "
       "touch_enabled, geo_enabled, geo_latitude, geo_longitude, geo_accuracy) "
-      "VALUES (?, ?, ?, COALESCE(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+      "VALUES (?, ?, ?, COALESCE(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
       "ON CONFLICT(id) DO UPDATE SET "
       "name=excluded.name, group_name=excluded.group_name, remark=COALESCE(excluded.remark, ''), status=excluded.status, "
       "created_at_ms=excluded.created_at_ms, last_open_at_ms=excluded.last_open_at_ms, data_dir=excluded.data_dir, "
       "fingerprint_mode=excluded.fingerprint_mode, language=excluded.language, user_agent=excluded.user_agent, "
+      "browser_engine=excluded.browser_engine, engine_config_json=excluded.engine_config_json, "
+      "fingerprint_seed=excluded.fingerprint_seed, start_url=excluded.start_url, "
+      "humanize_enabled=excluded.humanize_enabled, geoip_enabled=excluded.geoip_enabled, "
       "platform=excluded.platform, hardware_concurrency=excluded.hardware_concurrency, device_memory_gb=excluded.device_memory_gb, "
       "device_scale_factor=excluded.device_scale_factor, timezone=excluded.timezone, resolution=excluded.resolution, "
       "touch_enabled=excluded.touch_enabled, geo_enabled=excluded.geo_enabled, geo_latitude=excluded.geo_latitude, "
@@ -454,6 +487,12 @@ bool ProfileRepository::upsert(const ProfileListModel::ProfileItem& item, QStrin
   p.addBindValue(item.lastOpenAtMs);
   p.addBindValue(nn(item.dataDir));
   p.addBindValue(nn(item.fingerprintMode));
+  p.addBindValue(item.browserEngine.trimmed().isEmpty() ? QStringLiteral("system_chrome") : item.browserEngine.trimmed());
+  p.addBindValue(nn(item.engineConfigJson));
+  p.addBindValue(item.fingerprintSeed.trimmed().isEmpty() ? item.id : item.fingerprintSeed.trimmed());
+  p.addBindValue(nn(item.startUrl.trimmed()));
+  p.addBindValue(b(item.humanizeEnabled));
+  p.addBindValue(b(item.geoipEnabled));
   p.addBindValue(nn(item.language));
   p.addBindValue(nn(item.userAgent));
   p.addBindValue(nn(item.platform));

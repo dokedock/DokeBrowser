@@ -22,6 +22,12 @@ public:
     qint64 proxyLastAtMs = 0;
 
     QString dataDir;
+    QString browserEngine;
+    QString engineConfigJson;
+    QString fingerprintSeed;
+    QString startUrl;
+    bool humanizeEnabled = false;
+    bool geoipEnabled = false;
     QString fingerprintMode;
     QString language;
     QString userAgent;
