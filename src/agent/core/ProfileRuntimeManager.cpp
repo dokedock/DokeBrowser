@@ -136,14 +136,17 @@ void ProfileRuntimeManager::handleMessage(const QJsonObject& obj, StatusCallback
   }
   const QString chromeExe = engine.executable;
   QString browserExe = chromeExe;
+  QString browserError = engine.error;
   if (browserEngine == QStringLiteral("doke_chromium")) {
-    browserExe = DokeChromiumEngine::resolveExecutable(engineConfigJson);
+    const DokeChromiumEngine::ResolveResult result = DokeChromiumEngine::resolve(engineConfigJson);
+    browserExe = result.executable;
+    browserError = result.error;
   }
   const DokeChromiumEngine::Config dokeConfig =
       browserEngine == QStringLiteral("doke_chromium") ? DokeChromiumEngine::parseConfig(engineConfigJson)
                                                        : DokeChromiumEngine::Config();
   if (browserExe.isEmpty()) {
-    sendStatus(QStringLiteral("error"), engine.error);
+    sendStatus(QStringLiteral("error"), browserError);
     return;
   }
 

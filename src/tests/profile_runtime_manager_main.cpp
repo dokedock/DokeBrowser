@@ -76,6 +76,40 @@ bool testUnsupportedEngine() {
                "runtime should log profile start line");
   return ok;
 }
+
+bool testDokeInvalidExecutable() {
+  ProfileRuntimeManager manager;
+  QVector<CapturedStatus> statuses;
+  QStringList logs;
+
+  QJsonObject obj;
+  obj.insert(QStringLiteral("type"), QStringLiteral("profile.start"));
+  obj.insert(QStringLiteral("profile_id"), QStringLiteral("p2"));
+  obj.insert(QStringLiteral("profile_name"), QStringLiteral("Profile 2"));
+  obj.insert(QStringLiteral("browser_engine"), QStringLiteral("doke_chromium"));
+  obj.insert(QStringLiteral("engine_config_json"),
+             QStringLiteral("{\"executable\":\"/tmp/dokebrowser-missing-doke-chromium\"}"));
+
+  manager.handleMessage(
+      obj,
+      [&statuses](const QString& profileId, const QString& status, const QString& error) {
+        statuses.push_back({profileId, status, error});
+      },
+      [&logs](const QString& message) {
+        logs.push_back(message);
+      });
+
+  bool ok = true;
+  ok &= expect(statuses.size() == 2, "invalid doke path should emit starting then error");
+  ok &= expect(statuses.at(0).profileId == QStringLiteral("p2"), "doke profile id should be forwarded");
+  ok &= expect(statuses.at(0).status == QStringLiteral("starting"), "invalid doke first status should be starting");
+  ok &= expect(statuses.at(1).status == QStringLiteral("error"), "invalid doke second status should be error");
+  ok &= expect(statuses.at(1).error == QStringLiteral("doke_chromium_path_missing"),
+               "invalid doke path should return precise missing-path error");
+  ok &= expect(logs.size() == 1 && logs.first().contains(QStringLiteral("profile.start engine=doke_chromium")),
+               "invalid doke runtime should log profile start line");
+  return ok;
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -84,6 +118,7 @@ int main(int argc, char** argv) {
   bool ok = true;
   ok &= testMissingProfileId();
   ok &= testUnsupportedEngine();
+  ok &= testDokeInvalidExecutable();
   if (!ok) {
     return 1;
   }

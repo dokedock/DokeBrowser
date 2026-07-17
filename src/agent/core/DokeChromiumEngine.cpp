@@ -4,8 +4,163 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QProcess>
 #include <QStandardPaths>
 #include <QStringList>
+
+namespace {
+struct CommandResult {
+  bool started = false;
+  bool finished = false;
+  bool normalExit = false;
+  int exitCode = -1;
+  QByteArray stdoutData;
+  QByteArray stderrData;
+};
+
+bool isUsableExecutable(const QString& path) {
+  const QFileInfo info(path);
+  return info.exists() && info.isFile() && info.isExecutable();
+}
+
+QString executableErrorFor(const QString& path) {
+  const QFileInfo info(path);
+  if (!info.exists()) {
+    return QStringLiteral("doke_chromium_path_missing");
+  }
+  if (!info.isFile()) {
+    return QStringLiteral("doke_chromium_path_not_file");
+  }
+  if (!info.isExecutable()) {
+    return QStringLiteral("doke_chromium_path_not_executable");
+  }
+  return QStringLiteral("doke_chromium_not_found");
+}
+
+QStringList capabilitiesFor(const DokeChromiumEngine::Config& config) {
+  QStringList out;
+  if (config.nativeFingerprint) {
+    out << QStringLiteral("native_fingerprint");
+  }
+  if (config.nativeProxy) {
+    out << QStringLiteral("native_proxy");
+  }
+  if (config.nativeGeoip) {
+    out << QStringLiteral("native_geoip");
+  }
+  if (config.nativeHumanize) {
+    out << QStringLiteral("native_humanize");
+  }
+  return out;
+}
+
+QString firstOutputLine(const QByteArray& stdoutData, const QByteArray& stderrData) {
+  QString text = QString::fromUtf8(stdoutData).trimmed();
+  if (text.isEmpty()) {
+    text = QString::fromUtf8(stderrData).trimmed();
+  }
+  const QStringList lines = text.split('\n', Qt::SkipEmptyParts);
+  if (lines.isEmpty()) {
+    return {};
+  }
+  QString line = lines.first().trimmed();
+  if (line.size() > 240) {
+    line = line.left(240);
+  }
+  return line;
+}
+
+QByteArray mergedOutput(const CommandResult& result) {
+  QByteArray out = result.stdoutData.trimmed();
+  if (out.isEmpty()) {
+    out = result.stderrData.trimmed();
+  }
+  return out;
+}
+
+CommandResult runShortCommand(const QString& executable, const QStringList& arguments, int timeoutMs) {
+  CommandResult result;
+  QProcess process;
+  process.setProgram(executable);
+  process.setArguments(arguments);
+  process.start();
+  result.started = process.waitForStarted(1000);
+  if (!result.started) {
+    return result;
+  }
+  result.finished = process.waitForFinished(timeoutMs);
+  if (!result.finished) {
+    process.kill();
+    process.waitForFinished(1000);
+    result.stdoutData = process.readAllStandardOutput();
+    result.stderrData = process.readAllStandardError();
+    return result;
+  }
+  result.normalExit = process.exitStatus() == QProcess::NormalExit;
+  result.exitCode = process.exitCode();
+  result.stdoutData = process.readAllStandardOutput();
+  result.stderrData = process.readAllStandardError();
+  return result;
+}
+
+QString commandError(const CommandResult& result, const QString& prefix) {
+  if (!result.started) {
+    return QStringLiteral("%1_start_failed").arg(prefix);
+  }
+  if (!result.finished) {
+    return QStringLiteral("%1_timeout").arg(prefix);
+  }
+  if (!result.normalExit) {
+    return QStringLiteral("%1_crashed").arg(prefix);
+  }
+  if (result.exitCode != 0) {
+    return QStringLiteral("%1_exit_%2").arg(prefix).arg(result.exitCode);
+  }
+  return {};
+}
+
+QStringList stringListFromJsonArray(const QJsonArray& values) {
+  QStringList out;
+  for (const auto& value : values) {
+    const QString text = value.toString().trimmed();
+    if (!text.isEmpty() && !out.contains(text)) {
+      out << text;
+    }
+  }
+  return out;
+}
+
+QByteArray jsonObjectPayload(const QByteArray& raw) {
+  const QByteArray trimmed = raw.trimmed();
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    return trimmed;
+  }
+  const int start = trimmed.indexOf('{');
+  const int end = trimmed.lastIndexOf('}');
+  if (start < 0 || end <= start) {
+    return trimmed;
+  }
+  return trimmed.mid(start, end - start + 1);
+}
+
+void applyNativeProbeJson(DokeChromiumEngine::ProbeResult& out, const QByteArray& json) {
+  QJsonParseError parseError;
+  const QJsonDocument doc = QJsonDocument::fromJson(jsonObjectPayload(json), &parseError);
+  if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+    out.nativeProbeError = QStringLiteral("native_probe_invalid_json");
+    return;
+  }
+
+  const QJsonObject obj = doc.object();
+  out.version = obj.value(QStringLiteral("version")).toString().trimmed();
+  out.nativeCapabilities = stringListFromJsonArray(obj.value(QStringLiteral("capabilities")).toArray());
+  if (obj.value(QStringLiteral("probe_protocol")).isDouble()) {
+    out.probeProtocol = QString::number(obj.value(QStringLiteral("probe_protocol")).toInt());
+  } else {
+    out.probeProtocol = obj.value(QStringLiteral("probe_protocol")).toString().trimmed();
+  }
+}
+} // namespace
 
 QString DokeChromiumEngine::id() const {
   return QStringLiteral("doke_chromium");
@@ -19,10 +174,11 @@ bool DokeChromiumEngine::isAvailable() const {
   return !resolveExecutable().isEmpty();
 }
 
-QString DokeChromiumEngine::resolveExecutable() {
+DokeChromiumEngine::ResolveResult DokeChromiumEngine::resolve() {
   const QString envPath = qEnvironmentVariable("DOKE_CHROMIUM_PATH").trimmed();
-  if (!envPath.isEmpty() && QFileInfo::exists(envPath)) {
-    return envPath;
+  if (!envPath.isEmpty()) {
+    return isUsableExecutable(envPath) ? ResolveResult{envPath, QString()}
+                                      : ResolveResult{QString(), executableErrorFor(envPath)};
   }
 
   const QStringList names = {
@@ -33,18 +189,66 @@ QString DokeChromiumEngine::resolveExecutable() {
   for (const auto& n : names) {
     const QString p = QStandardPaths::findExecutable(n);
     if (!p.isEmpty()) {
-      return p;
+      return {p, QString()};
     }
   }
-  return {};
+  return {QString(), QStringLiteral("doke_chromium_not_found")};
+}
+
+DokeChromiumEngine::ResolveResult DokeChromiumEngine::resolve(const QString& engineConfigJson) {
+  const Config config = parseConfig(engineConfigJson);
+  if (!config.executable.isEmpty()) {
+    return isUsableExecutable(config.executable) ? ResolveResult{config.executable, QString()}
+                                                : ResolveResult{QString(), executableErrorFor(config.executable)};
+  }
+  return resolve();
+}
+
+QString DokeChromiumEngine::resolveExecutable() {
+  return resolve().executable;
 }
 
 QString DokeChromiumEngine::resolveExecutable(const QString& engineConfigJson) {
+  const ResolveResult result = resolve(engineConfigJson);
+  return result.executable;
+}
+
+DokeChromiumEngine::ProbeResult DokeChromiumEngine::probe(const QString& engineConfigJson, int probeTimeoutMs) {
+  ProbeResult out;
   const Config config = parseConfig(engineConfigJson);
-  if (!config.executable.isEmpty() && QFileInfo::exists(config.executable)) {
-    return config.executable;
+  out.capabilities = capabilitiesFor(config);
+  out.resolution = resolve(engineConfigJson);
+  if (out.resolution.executable.isEmpty()) {
+    return out;
   }
-  return resolveExecutable();
+
+  const CommandResult nativeProbe =
+      runShortCommand(out.resolution.executable, QStringList{QStringLiteral("--doke-probe")}, probeTimeoutMs);
+  out.nativeProbeError = commandError(nativeProbe, QStringLiteral("native_probe"));
+  if (out.nativeProbeError.isEmpty()) {
+    const QByteArray nativeJson = mergedOutput(nativeProbe);
+    if (nativeJson.isEmpty()) {
+      out.nativeProbeError = QStringLiteral("native_probe_empty");
+    } else {
+      applyNativeProbeJson(out, nativeJson);
+    }
+  }
+
+  if (!out.version.isEmpty()) {
+    return out;
+  }
+
+  const CommandResult versionProbe =
+      runShortCommand(out.resolution.executable, QStringList{QStringLiteral("--version")}, probeTimeoutMs);
+  out.versionError = commandError(versionProbe, QStringLiteral("version"));
+  if (!out.versionError.isEmpty()) {
+    return out;
+  }
+  out.version = firstOutputLine(versionProbe.stdoutData, versionProbe.stderrData);
+  if (out.version.isEmpty()) {
+    out.versionError = QStringLiteral("version_empty");
+  }
+  return out;
 }
 
 DokeChromiumEngine::Config DokeChromiumEngine::parseConfig(const QString& engineConfigJson) {

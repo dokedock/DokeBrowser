@@ -3,6 +3,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -25,10 +26,22 @@ QString writeExecutable(QTemporaryDir& tempDir, const QString& name) {
   if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
     return {};
   }
-  file.write("#!/bin/sh\nexit 0\n");
+  file.write("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo \"Doke Chromium 0.1-test\"; exit 0; fi\nexit 0\n");
   file.close();
   QFile::setPermissions(path,
                         QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner | QFile::ReadGroup | QFile::ExeGroup);
+  return path;
+}
+
+QString writePlainFile(QTemporaryDir& tempDir, const QString& name) {
+  const QString path = QDir(tempDir.path()).filePath(name);
+  QFile file(path);
+  if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+    return {};
+  }
+  file.write("not executable\n");
+  file.close();
+  QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner | QFile::ReadGroup);
   return path;
 }
 
@@ -60,7 +73,7 @@ bool testParseConfig(const QString& executable, const QString& json) {
   return ok;
 }
 
-bool testExecutableResolution(const QString& executable, const QString& json) {
+bool testExecutableResolution(const QString& executable, const QString& nonExecutable, const QString& json) {
   bool ok = true;
   ok &= expect(DokeChromiumEngine::resolveExecutable(json) == executable,
                "per-profile executable did not win resolution");
@@ -72,6 +85,23 @@ bool testExecutableResolution(const QString& executable, const QString& json) {
   ok &= expect(fallbackConfig.executable == executable, "binary_path fallback was not parsed");
   ok &= expect(DokeChromiumEngine::resolveExecutable(fallbackJson) == executable,
                "binary_path fallback did not resolve");
+
+  QJsonObject invalidRoot;
+  invalidRoot.insert(QStringLiteral("executable"), nonExecutable);
+  const QString invalidJson = QString::fromUtf8(QJsonDocument(invalidRoot).toJson(QJsonDocument::Compact));
+  const DokeChromiumEngine::ResolveResult invalidResult = DokeChromiumEngine::resolve(invalidJson);
+  ok &= expect(invalidResult.executable.isEmpty(), "non-executable per-profile path must not resolve");
+  ok &= expect(invalidResult.error == QStringLiteral("doke_chromium_path_not_executable"),
+               "non-executable per-profile path should return a precise error");
+
+  QJsonObject missingRoot;
+  missingRoot.insert(QStringLiteral("executable"),
+                     QDir(QFileInfo(nonExecutable).absolutePath()).filePath(QStringLiteral("missing")));
+  const QString missingJson = QString::fromUtf8(QJsonDocument(missingRoot).toJson(QJsonDocument::Compact));
+  const DokeChromiumEngine::ResolveResult missingResult = DokeChromiumEngine::resolve(missingJson);
+  ok &= expect(missingResult.executable.isEmpty(), "missing per-profile path must not fallback to a global executable");
+  ok &= expect(missingResult.error == QStringLiteral("doke_chromium_path_missing"),
+               "missing per-profile path should return a precise error");
   return ok;
 }
 
@@ -104,6 +134,22 @@ bool testArgumentOrdering(const QString& json, const QString& profileDir) {
                "empty start URL should resolve to about:blank");
   return ok;
 }
+
+bool testProbeMetadata(const QString& json) {
+  const DokeChromiumEngine::ProbeResult probe = DokeChromiumEngine::probe(json);
+
+  bool ok = true;
+  ok &= expect(!probe.resolution.executable.isEmpty(), "probe executable should resolve");
+  ok &= expect(probe.capabilities.contains(QStringLiteral("native_fingerprint")),
+               "probe capabilities should include native_fingerprint");
+  ok &= expect(probe.capabilities.contains(QStringLiteral("native_proxy")),
+               "probe capabilities should include native_proxy");
+  ok &= expect(probe.capabilities.contains(QStringLiteral("native_geoip")),
+               "probe capabilities should include native_geoip");
+  ok &= expect(probe.capabilities.contains(QStringLiteral("native_humanize")),
+               "probe capabilities should include native_humanize");
+  return ok;
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -120,12 +166,18 @@ int main(int argc, char** argv) {
     qCritical("failed to create temporary executable");
     return 1;
   }
+  const QString nonExecutable = writePlainFile(tempDir, QStringLiteral("doke_chromium.txt"));
+  if (nonExecutable.isEmpty()) {
+    qCritical("failed to create temporary plain file");
+    return 1;
+  }
 
   const QString json = configJson(executable);
   bool ok = true;
   ok &= testParseConfig(executable, json);
-  ok &= testExecutableResolution(executable, json);
+  ok &= testExecutableResolution(executable, nonExecutable, json);
   ok &= testArgumentOrdering(json, QDir(tempDir.path()).filePath(QStringLiteral("profile")));
+  ok &= testProbeMetadata(json);
 
   if (!ok) {
     return 1;

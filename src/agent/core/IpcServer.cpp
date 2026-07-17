@@ -133,14 +133,42 @@ void IpcServer::onPeerJson(const QJsonObject& obj) {
       return;
     }
 
-    const QString executable = engineId == QStringLiteral("doke_chromium")
-                                   ? DokeChromiumEngine::resolveExecutable(engineConfigJson)
-                                   : BrowserEngineFactory::executableFor(engineId);
+    const DokeChromiumEngine::ProbeResult dokeProbe =
+        engineId == QStringLiteral("doke_chromium") ? DokeChromiumEngine::probe(engineConfigJson)
+                                                    : DokeChromiumEngine::ProbeResult();
+    const QString executable =
+        engineId == QStringLiteral("doke_chromium") ? dokeProbe.resolution.executable : BrowserEngineFactory::executableFor(engineId);
     result.insert(QStringLiteral("available"), !executable.isEmpty());
     if (executable.isEmpty()) {
-      result.insert(QStringLiteral("error"), BrowserEngineFactory::notFoundErrorFor(engineId));
+      result.insert(QStringLiteral("error"),
+                    engineId == QStringLiteral("doke_chromium") ? dokeProbe.resolution.error
+                                                                : BrowserEngineFactory::notFoundErrorFor(engineId));
     } else {
       result.insert(QStringLiteral("executable"), executable);
+      if (engineId == QStringLiteral("doke_chromium")) {
+        if (!dokeProbe.version.isEmpty()) {
+          result.insert(QStringLiteral("version"), dokeProbe.version);
+        }
+        if (!dokeProbe.versionError.isEmpty()) {
+          result.insert(QStringLiteral("version_error"), dokeProbe.versionError);
+        }
+        if (!dokeProbe.nativeProbeError.isEmpty()) {
+          result.insert(QStringLiteral("native_probe_error"), dokeProbe.nativeProbeError);
+        }
+        if (!dokeProbe.probeProtocol.isEmpty()) {
+          result.insert(QStringLiteral("probe_protocol"), dokeProbe.probeProtocol);
+        }
+        QJsonArray capabilities;
+        for (const auto& capability : dokeProbe.capabilities) {
+          capabilities.push_back(capability);
+        }
+        result.insert(QStringLiteral("capabilities"), capabilities);
+        QJsonArray nativeCapabilities;
+        for (const auto& capability : dokeProbe.nativeCapabilities) {
+          nativeCapabilities.push_back(capability);
+        }
+        result.insert(QStringLiteral("native_capabilities"), nativeCapabilities);
+      }
     }
     m_peer->send(result);
     return;

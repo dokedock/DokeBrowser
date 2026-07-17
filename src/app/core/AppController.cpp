@@ -101,14 +101,52 @@ QStringList linesToList(const QString& text) {
   return out;
 }
 
+QStringList jsonArrayToStringList(const QJsonArray& values) {
+  QStringList out;
+  for (const auto& value : values) {
+    const QString text = value.toString().trimmed();
+    if (!text.isEmpty()) {
+      out << text;
+    }
+  }
+  return out;
+}
+
+QString engineErrorText(const QString& error) {
+  if (error == QStringLiteral("chrome_not_found")) {
+    return QStringLiteral("未找到 Chrome/Chromium");
+  }
+  if (error == QStringLiteral("doke_chromium_not_found")) {
+    return QStringLiteral("未找到 Doke Chromium");
+  }
+  if (error == QStringLiteral("doke_chromium_path_missing")) {
+    return QStringLiteral("Doke 路径不存在");
+  }
+  if (error == QStringLiteral("doke_chromium_path_not_file")) {
+    return QStringLiteral("Doke 路径不是可执行文件");
+  }
+  if (error == QStringLiteral("doke_chromium_path_not_executable")) {
+    return QStringLiteral("Doke 文件没有执行权限");
+  }
+  if (error.startsWith(QStringLiteral("unsupported_browser_engine:"))) {
+    return QStringLiteral("不支持的内核: %1").arg(error.section(':', 1));
+  }
+  return error.isEmpty() ? QStringLiteral("不可用") : error;
+}
+
 QString engineStatusText(const QJsonObject& engine) {
   const bool available = engine.value(QStringLiteral("available")).toBool(false);
   if (available) {
     const QString executable = engine.value(QStringLiteral("executable")).toString();
-    return executable.isEmpty() ? QStringLiteral("可用") : QStringLiteral("可用: %1").arg(executable);
+    QString status = executable.isEmpty() ? QStringLiteral("可用") : QStringLiteral("可用: %1").arg(executable);
+    const QString version = engine.value(QStringLiteral("version")).toString().trimmed();
+    if (!version.isEmpty()) {
+      status += QStringLiteral(" (%1)").arg(version);
+    }
+    return status;
   }
   const QString error = engine.value(QStringLiteral("error")).toString(QStringLiteral("not_available"));
-  return QStringLiteral("不可用: %1").arg(error);
+  return QStringLiteral("不可用: %1").arg(engineErrorText(error));
 }
 }
 
@@ -330,7 +368,15 @@ AppController::AppController(QObject* parent) : QObject(parent) {
     } else {
       m_engineStatusByProfileId.insert(profileId, status);
     }
-    appendLogLine(QStringLiteral("engine_probe: %1 %2").arg(id, status), QStringLiteral("engine"), profileId);
+    const QStringList capabilities = jsonArrayToStringList(obj.value(QStringLiteral("capabilities")).toArray());
+    const QStringList nativeCapabilities = jsonArrayToStringList(obj.value(QStringLiteral("native_capabilities")).toArray());
+    const QString suffix =
+        capabilities.isEmpty() ? QString() : QStringLiteral(" capabilities=%1").arg(capabilities.join(QStringLiteral(",")));
+    const QString nativeSuffix = nativeCapabilities.isEmpty()
+                                     ? QString()
+                                     : QStringLiteral(" native_capabilities=%1").arg(nativeCapabilities.join(QStringLiteral(",")));
+    appendLogLine(QStringLiteral("engine_probe: %1 %2%3%4").arg(id, status, suffix, nativeSuffix), QStringLiteral("engine"),
+                  profileId);
     emit selectedProfileChanged();
   });
 

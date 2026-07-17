@@ -94,7 +94,18 @@ QString writeFakeDokeExecutable(QTemporaryDir& tempDir) {
   if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
     return {};
   }
-  file.write("@echo off\r\ntimeout /t 30 /nobreak >nul\r\nexit /b 0\r\n");
+  file.write("@echo off\r\n"
+             "if \"%1\"==\"--doke-probe\" (\r\n"
+             "  echo native probe ready\r\n"
+             "  echo {\"probe_protocol\":1,\"version\":\"Doke Chromium 0.1-probe\",\"capabilities\":[\"native_fingerprint\",\"native_proxy\"]}\r\n"
+             "  exit /b 0\r\n"
+             ")\r\n"
+             "if \"%1\"==\"--version\" (\r\n"
+             "  echo Doke Chromium 0.1-test\r\n"
+             "  exit /b 0\r\n"
+             ")\r\n"
+             "timeout /t 30 /nobreak >nul\r\n"
+             "exit /b 0\r\n");
   file.close();
   return path;
 #else
@@ -103,12 +114,28 @@ QString writeFakeDokeExecutable(QTemporaryDir& tempDir) {
   if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
     return {};
   }
-  file.write("#!/bin/sh\nsleep 30\nexit 0\n");
+  file.write("#!/bin/sh\n"
+             "if [ \"$1\" = \"--doke-probe\" ]; then echo 'native probe ready'; printf '%s\\n' '{\"probe_protocol\":1,\"version\":\"Doke Chromium 0.1-probe\",\"capabilities\":[\"native_fingerprint\",\"native_proxy\"]}'; exit 0; fi\n"
+             "if [ \"$1\" = \"--version\" ]; then echo \"Doke Chromium 0.1-test\"; exit 0; fi\n"
+             "sleep 30\n"
+             "exit 0\n");
   file.close();
   QFile::setPermissions(path,
                         QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner | QFile::ReadGroup | QFile::ExeGroup);
   return path;
 #endif
+}
+
+QString writePlainFile(QTemporaryDir& tempDir, const QString& name) {
+  const QString path = QDir(tempDir.path()).filePath(name);
+  QFile file(path);
+  if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+    return {};
+  }
+  file.write("not executable\n");
+  file.close();
+  QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner | QFile::ReadGroup);
+  return path;
 }
 }
 
@@ -204,6 +231,12 @@ int main(int argc, char* argv[]) {
 
   QJsonObject availableDokeConfig;
   availableDokeConfig.insert(QStringLiteral("executable"), fakeDokePath);
+  QJsonObject availableDokeFeatures;
+  availableDokeFeatures.insert(QStringLiteral("native_fingerprint"), true);
+  availableDokeFeatures.insert(QStringLiteral("native_proxy"), true);
+  availableDokeFeatures.insert(QStringLiteral("native_geoip"), true);
+  availableDokeFeatures.insert(QStringLiteral("native_humanize"), true);
+  availableDokeConfig.insert(QStringLiteral("features"), availableDokeFeatures);
   QJsonObject availableProbe;
   availableProbe.insert(QStringLiteral("type"), QStringLiteral("engine.probe"));
   availableProbe.insert(QStringLiteral("profile_id"), QStringLiteral("smoke-available"));
@@ -225,6 +258,85 @@ int main(int argc, char* argv[]) {
     agent.waitForFinished(2000);
     qCritical("engine_probe_expected_available");
     return 10;
+  }
+  if (availableProbeResult.obj.value(QStringLiteral("version")).toString()
+      != QStringLiteral("Doke Chromium 0.1-probe")) {
+    agent.kill();
+    agent.waitForFinished(2000);
+    qCritical("engine_probe_version_mismatch");
+    return 36;
+  }
+  if (availableProbeResult.obj.value(QStringLiteral("probe_protocol")).toString() != QStringLiteral("1")) {
+    agent.kill();
+    agent.waitForFinished(2000);
+    qCritical("engine_probe_protocol_mismatch");
+    return 38;
+  }
+  const QJsonArray capabilityArray = availableProbeResult.obj.value(QStringLiteral("capabilities")).toArray();
+  if (!capabilityArray.contains(QStringLiteral("native_fingerprint"))
+      || !capabilityArray.contains(QStringLiteral("native_proxy"))
+      || !capabilityArray.contains(QStringLiteral("native_geoip"))
+      || !capabilityArray.contains(QStringLiteral("native_humanize"))) {
+    agent.kill();
+    agent.waitForFinished(2000);
+    qCritical("engine_probe_capabilities_mismatch");
+    return 37;
+  }
+  const QJsonArray nativeCapabilityArray = availableProbeResult.obj.value(QStringLiteral("native_capabilities")).toArray();
+  if (!nativeCapabilityArray.contains(QStringLiteral("native_fingerprint"))
+      || !nativeCapabilityArray.contains(QStringLiteral("native_proxy"))
+      || nativeCapabilityArray.contains(QStringLiteral("native_geoip"))
+      || nativeCapabilityArray.contains(QStringLiteral("native_humanize"))) {
+    agent.kill();
+    agent.waitForFinished(2000);
+    qCritical("engine_probe_native_capabilities_mismatch");
+    return 39;
+  }
+
+  const QString plainDokePath = writePlainFile(fakeDokeDir, QStringLiteral("doke_chromium.txt"));
+  if (plainDokePath.isEmpty()) {
+    agent.kill();
+    agent.waitForFinished(2000);
+    qCritical("plain_doke_create_failed");
+    return 31;
+  }
+
+  QJsonObject invalidDokeConfig;
+  invalidDokeConfig.insert(QStringLiteral("executable"), plainDokePath);
+  QJsonObject invalidProbe;
+  invalidProbe.insert(QStringLiteral("type"), QStringLiteral("engine.probe"));
+  invalidProbe.insert(QStringLiteral("profile_id"), QStringLiteral("smoke-invalid"));
+  invalidProbe.insert(QStringLiteral("browser_engine"), QStringLiteral("doke_chromium"));
+  invalidProbe.insert(QStringLiteral("engine_config_json"),
+                      QString::fromUtf8(QJsonDocument(invalidDokeConfig).toJson(QJsonDocument::Compact)));
+  framed.send(invalidProbe);
+
+  const auto invalidProbeResult = waitForType(&framed, QStringLiteral("engine.probe.result"), 3000);
+  if (!invalidProbeResult.ok
+      || invalidProbeResult.obj.value(QStringLiteral("id")).toString() != QStringLiteral("doke_chromium")) {
+    agent.kill();
+    agent.waitForFinished(2000);
+    qCritical("engine_probe_invalid_timeout");
+    return 32;
+  }
+  if (invalidProbeResult.obj.value(QStringLiteral("profile_id")).toString() != QStringLiteral("smoke-invalid")) {
+    agent.kill();
+    agent.waitForFinished(2000);
+    qCritical("engine_probe_invalid_profile_id_mismatch");
+    return 33;
+  }
+  if (invalidProbeResult.obj.value(QStringLiteral("available")).toBool(true)) {
+    agent.kill();
+    agent.waitForFinished(2000);
+    qCritical("engine_probe_invalid_expected_unavailable");
+    return 34;
+  }
+  if (invalidProbeResult.obj.value(QStringLiteral("error")).toString()
+      != QStringLiteral("doke_chromium_path_not_executable")) {
+    agent.kill();
+    agent.waitForFinished(2000);
+    qCritical("engine_probe_invalid_error_mismatch");
+    return 35;
   }
 
   const QString fakeDokeProfileId = QStringLiteral("smoke-doke-start");
@@ -290,6 +402,12 @@ int main(int argc, char* argv[]) {
     agent.waitForFinished(2000);
     qCritical("engine_probe_expected_unavailable");
     return 13;
+  }
+  if (probe.obj.value(QStringLiteral("error")).toString() != QStringLiteral("doke_chromium_path_missing")) {
+    agent.kill();
+    agent.waitForFinished(2000);
+    qCritical("engine_probe_missing_error_mismatch");
+    return 16;
   }
 
   QJsonObject proxy;

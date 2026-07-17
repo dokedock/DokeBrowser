@@ -122,7 +122,7 @@ cmake --build build -j 8
 - `engine.list` / `engine.probe`
   - `{ "type": "engine.list" }`
   - `{ "type": "engine.probe", "profile_id": "...", "browser_engine": "doke_chromium", "engine_config_json": "{...}" }`
-  - `engine.probe` 会按当前 Profile 的 `engine_config_json` 检测指定二进制路径，可用于 UI 中“检测”当前 Doke 路径；回包带 `profile_id` 时 UI 会按 Profile 保存检测结果
+  - `engine.probe` 会按当前 Profile 的 `engine_config_json` 检测指定二进制路径，可用于 UI 中“检测”当前 Doke 路径；显式路径必须是真实可执行文件，路径不存在或不可执行时不会回退到全局 Doke 路径；可用时会优先执行 `--doke-probe` 读取 `version` / `probe_protocol` / `native_capabilities`，失败时带 `native_probe_error` 并 fallback 到 `--version`；同时按 `features` 返回当前 Profile 声明的 `capabilities`；回包带 `profile_id` 时 UI 会按 Profile 保存检测结果
 - `profile.start/profile.stop`（App → Agent）
   - `{ "type": "profile.start", "profile_id": "...", "profile_name": "...", "data_dir": "...", "chrome_compat": false, "fingerprint_mode": "follow_ip|random", "language": "ja-JP", "timezone": "Asia/Tokyo", "user_agent": "...", "platform": "MacIntel", "hardware_concurrency": 8, "device_memory_gb": 8, "device_scale_factor": 1, "resolution": "1280x720", "touch_enabled": false, "geo_enabled": true, "geo_latitude": 35.6895, "geo_longitude": 139.6917, "geo_accuracy": 1000, "proxy": { "enabled": true, "type":"http|https|socks5|direct", "host":"...", "port": 8080, "username":"", "password":"" } }`
   - 已扩展字段：`browser_engine: "system_chrome|doke_chromium|cef"`、`engine_options: { "humanize": true, "geoip": true }`
@@ -228,7 +228,7 @@ cmake --build build -j 8
 - 开发路线：已确定“DokeBrowser 控制台 + 自研 Doke Chromium 内核”，并新增 [DEVELOPMENT.md](file:///Users/mac/Documents/浏览器/DEVELOPMENT.md)
 - 框架：Profile 已新增 `browser_engine`、`engine_config_json`、`fingerprint_seed`、`start_url`、`humanize_enabled`、`geoip_enabled` 字段；UI 基础信息页已能编辑；`profile.start` 已携带这些字段
 - 框架：Agent 已支持 `engine.list`，可探测 `system_chrome` 与 `doke_chromium`（通过 `DOKE_CHROMIUM_PATH` 或 PATH 中的 `doke-chromium`/`doke_chromium`/`dokebrowser-chromium`）
-- 功能：Agent 已支持 `engine.probe`，可按当前 Profile 的 `engine_config_json` 精确检测 Doke Chromium 路径；App 会按 `profile_id` 记录检测结果，避免不同 Profile 的 Doke 路径状态互相覆盖
+- 功能：Agent 已支持 `engine.probe`，可按当前 Profile 的 `engine_config_json` 精确检测 Doke Chromium 路径；显式路径必须存在且可执行，坏路径不会 fallback 到 `DOKE_CHROMIUM_PATH` / PATH；错误码可区分 not found / missing / not file / not executable；可用时优先读取 `--doke-probe` JSON 握手，回包区分 Profile 声明能力 `capabilities` 与二进制自报能力 `native_capabilities`，App 会转换为中文状态文案并按 `profile_id` 记录检测结果，避免不同 Profile 的 Doke 路径状态互相覆盖
 - 功能：基础信息页“内核状态”旁已新增“刷新 / 检测”按钮，可手动刷新全局内核状态或检测当前 Profile 的内核配置；Doke 路径支持通过“选择”按钮从本地文件选择器写入
 - 工具：`tools/ipc_cli.py` 已支持命令行 `engine-list` / `probe-engine` / `start-doke`，便于真实二进制接入时不打开 UI 也能验证路径和启动链路
 - 框架：Agent 已新增 `BrowserEngine` / `BrowserEngineFactory` / `SystemChromeEngine` / `DokeChromiumEngine` 骨架；`profile.start` 已通过 Factory 选择引擎可执行文件
@@ -236,7 +236,7 @@ cmake --build build -j 8
 - 框架：代理认证/指纹注入临时扩展生成已从 `IpcServer` 迁入 `SystemChromeEngine::createProfileExtension`
 - 框架：CDP attach 轮询、`webSocketDebuggerUrl` 解析和 `CdpClient` 创建已迁入 `SystemChromeEngine::attachCdpWhenReady`
 - 框架：浏览器进程创建、stdout/stderr 日志、错误状态、兼容重试、running/stopped/crashed 状态已迁入 `SystemChromeEngine::launchProcess`
-- 框架：`DokeChromiumEngine` 已有独立 `buildArguments` / `launchProcess` 入口；`profile.start` 已按 `system_chrome` / `doke_chromium` 分流，Doke 路径支持 `engine_config_json.executable` / `binary_path` / `extra_args`
+- 框架：`DokeChromiumEngine` 已有独立 `buildArguments` / `launchProcess` 入口；`profile.start` 已按 `system_chrome` / `doke_chromium` 分流，Doke 路径支持 `engine_config_json.executable` / `binary_path` / `extra_args`，并校验显式二进制路径必须可执行
 - 框架：`ProfileStartRequest` 已收拢 `profile.start` 解析；Doke UI 已支持二进制路径、额外参数、原生能力开关
 - 框架：`native_fingerprint` / `native_geoip` 已接入 fallback 分流；开启后分别抑制 Agent 指纹注入或 GeoIP 注入 fallback
 - 框架：`profile.start` 内的 Profile 目录解析、代理启动参数、debug port 分配、窗口尺寸参数已拆成 helper；App 已接入 `engine.list.result` 并在基础信息页展示当前内核可用性
@@ -248,12 +248,12 @@ cmake --build build -j 8
 - 框架：`IpcServer` 已瘦身为 IPC 路由层，当前主要负责 hello、engine.list、消息分发和统一回包
 - 文档：新增 [docs/CHROMIUM_PATCH_PLAN.md](file:///Users/mac/Documents/浏览器/docs/CHROMIUM_PATCH_PLAN.md) 与 [docs/DETECTION_BASELINE.md](file:///Users/mac/Documents/浏览器/docs/DETECTION_BASELINE.md)
 - 文档：新增 [docs/CHROMIUM_SOURCE.md](file:///Users/mac/Documents/浏览器/docs/CHROMIUM_SOURCE.md)，定义本地源码、补丁队列、构建和二进制交接流程
-- 自动化：新增 `dokebrowser_engine_config`，可不依赖真实 Doke Chromium 二进制验证配置解析、路径优先级、native feature 开关和 extra args 顺序
+- 自动化：新增 `dokebrowser_engine_config`，可不依赖真实 Doke Chromium 二进制验证配置解析、路径优先级、无效显式路径拒绝、`--version` 探针、native feature 开关和 extra args 顺序
 - 自动化：新增 `dokebrowser_profile_launch_config`，可不依赖 IPC/真实浏览器验证启动配置解析与代理参数生成
 - 自动化：新增 `dokebrowser_profile_runtime_manager`，可不启动真实浏览器验证运行态早期错误路径和状态/日志回调
 - 自动化：新增 `dokebrowser_proxy_test_runner`，可不依赖外网验证代理测试请求解析、校验和 fallback URL 规则
 - 自动化：新增 `dokebrowser_openvpn_manager`，可不启动真实 OpenVPN 验证请求解析、校验和参数组装
-- 自动化：Smoke Test 可用于回归关键链路（弱依赖外网可用性），并已覆盖假 Doke Chromium 可执行文件的 `engine.probe` 可用/不可用探测和 `profile.start/profile.stop` 启停链路
+- 自动化：Smoke Test 可用于回归关键链路（弱依赖外网可用性），并已覆盖假 Doke Chromium 可执行文件的 `engine.probe` 可用/不可用探测、`--doke-probe` 版本/native 能力回包、普通文件拒绝和 `profile.start/profile.stop` 启停链路
 
 ## 参考项目（指纹对抗与架构借鉴）
 - XChrome / zchrome（WPF 控制台 + CDP 注入思路）

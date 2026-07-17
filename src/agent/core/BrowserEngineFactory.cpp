@@ -28,6 +28,13 @@ BrowserEngineDescriptor BrowserEngineFactory::describe(const QString& id) {
   const QString normalized = normalizeId(id);
   BrowserEngineDescriptor out;
   out.id = normalized;
+  if (normalized == QStringLiteral("doke_chromium")) {
+    const DokeChromiumEngine::ResolveResult result = DokeChromiumEngine::resolve();
+    out.executable = result.executable;
+    out.error = result.error;
+    return out;
+  }
+
   out.executable = executableFor(normalized);
   if (out.executable.isEmpty()) {
     out.error = notFoundErrorFor(normalized);

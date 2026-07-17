@@ -66,9 +66,21 @@ After a successful build, configure DokeBrowser with either:
 export DOKE_CHROMIUM_PATH=/absolute/path/to/doke_chromium
 ```
 
-or set `engine_config_json.executable` from the UI Doke path selector.
+or set `engine_config_json.executable` from the UI Doke path selector. Explicit Profile paths must point to an executable file; invalid explicit paths are treated as unavailable and do not fall back to `DOKE_CHROMIUM_PATH` or PATH.
 
 Use the UI "Detect" button or IPC `engine.probe` to verify the path before launching a Profile.
+Probe failures return one of `doke_chromium_not_found`, `doke_chromium_path_missing`, `doke_chromium_path_not_file`, or `doke_chromium_path_not_executable`.
+Successful probes first run `doke_chromium --doke-probe` with a short timeout. A native Doke Chromium binary should return JSON:
+
+```json
+{
+  "probe_protocol": 1,
+  "version": "Doke Chromium 0.1.0",
+  "capabilities": ["native_fingerprint", "native_proxy"]
+}
+```
+
+The IPC response maps native JSON `capabilities` to `native_capabilities`. It also returns Profile-declared `capabilities` derived from `engine_config_json.features`. If `--doke-probe` fails, the agent returns `native_probe_error` and falls back to `--version`, returning `version` or `version_error`.
 
 Command-line probe:
 

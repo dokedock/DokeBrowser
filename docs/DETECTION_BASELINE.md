@@ -5,7 +5,7 @@ This document tracks manual and semi-automated fingerprint checks for `system_ch
 ## Engines
 
 - `system_chrome`: development fallback using local Chrome/Chromium, extension injection, and CDP fallback.
-- `doke_chromium`: target self-developed Chromium binary, resolved from `engine_config_json.executable`, `engine_config_json.binary_path`, `DOKE_CHROMIUM_PATH`, or PATH.
+- `doke_chromium`: target self-developed Chromium binary, resolved from `engine_config_json.executable`, `engine_config_json.binary_path`, `DOKE_CHROMIUM_PATH`, or PATH. If a Profile explicitly sets an executable path, that path must exist and be executable; invalid explicit paths do not fall back to global resolution.
 
 ## Test Matrix
 
