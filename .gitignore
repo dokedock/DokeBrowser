@@ -116,6 +116,9 @@ ipch/
 build/
 cmake-build-*/
 
+# Local Chromium checkout for doke_chromium development. Keep source out of this repo.
+third_party/chromium/
+
 # Visual Studio profiler
 *.psess
 *.vsp

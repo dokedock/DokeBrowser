@@ -129,6 +129,14 @@ public:
 - `docs/chromium-patches.md`：每个补丁的目的、影响面、检测项、回归方法。
 - `tools/build_doke_chromium.*`：按平台构建自研 Chromium。
 
+当前已建立本地源码/补丁脚手架：
+
+- `docs/CHROMIUM_SOURCE.md`: 本地源码、补丁队列、构建和二进制交接流程。
+- `patches/chromium/series`: 自研补丁应用顺序。
+- `tools/apply_chromium_patches.sh`: 对本地 Chromium checkout 应用补丁。
+- `tools/build_doke_chromium.sh`: 从本地 Chromium checkout 构建目标。
+- `third_party/README.md`: 本地源码工作区说明；完整 Chromium checkout 不提交到仓库。
+
 ### `cef`
 
 CEF 作为后续可选技术路线：
@@ -256,6 +264,7 @@ SQLite 迁移要保持向后兼容。旧 Profile 默认：
 - 已新增 `dokebrowser_profile_runtime_manager` 自动化测试，覆盖运行态早期错误路径和状态/日志回调
 - 已新增 `dokebrowser_proxy_test_runner` 自动化测试，覆盖代理测试请求解析、错误校验和 fallback URL 规则
 - 已新增 `dokebrowser_openvpn_manager` 自动化测试，覆盖 OpenVPN 请求解析、错误校验和参数组装
+- Smoke Test 已覆盖 `engine.probe` 对假 Doke Chromium 可执行文件的可用/不可用探测
 - 保持现有 smoke test 通过
 
 ### M4: Doke Chromium 进程启动
@@ -275,6 +284,7 @@ SQLite 迁移要保持向后兼容。旧 Profile 默认：
 - 优先补齐 UA-CH、WebRTC、Canvas、WebGL、Audio、screen、plugins、hardware、CDP detection
 - 每个补丁必须绑定检测项和回归脚本
 - 当前路线文档：[docs/CHROMIUM_PATCH_PLAN.md](docs/CHROMIUM_PATCH_PLAN.md)
+- 当前源码流程文档：[docs/CHROMIUM_SOURCE.md](docs/CHROMIUM_SOURCE.md)
 
 ### M6: 检测基准
 

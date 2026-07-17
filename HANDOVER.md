@@ -17,6 +17,9 @@
 - `src/agent/core/ProfileLaunchConfig.*`：`profile.start` 解析、代理启动参数、Profile 数据目录、debug port 分配、窗口尺寸参数
 - `src/agent/core/ProfileRuntimeManager.*`：Profile 浏览器进程、CDP client、临时扩展、代理映射和 start/stop 运行态编排
 - `src/agent/core/ProxyTestRunner.*`：`proxy.test` / `proxy_pool.test` 的请求解析、校验、URL fallback、异步网络测试与结果组装
+- `patches/chromium`：自研 Chromium 补丁队列占位，`series` 定义应用顺序
+- `third_party`：本地第三方源码工作区说明；完整 Chromium checkout 不提交到仓库
+- `tools/apply_chromium_patches.sh` / `tools/build_doke_chromium.sh`：本地补丁应用与构建入口，不负责下载源码
 - `src/shared`：共享库（本地 IPC：4 字节长度前缀 + JSON）
 - `src/tests`：自动化测试（启动 agent + IPC + 代理直连自检；Doke Chromium 配置解析与启动参数回归）
 - [DEVELOPMENT.md](file:///Users/mac/Documents/浏览器/DEVELOPMENT.md)：新开发路线文档，记录 DokeBrowser 控制台 + 自研 Doke Chromium 方案
@@ -242,12 +245,13 @@ cmake --build build -j 8
 - 框架：`OpenVpnManager` 已从 `IpcServer` 拆出，统一承载 OpenVPN 进程、SOCKS auth 临时文件、状态和日志转发
 - 框架：`IpcServer` 已瘦身为 IPC 路由层，当前主要负责 hello、engine.list、消息分发和统一回包
 - 文档：新增 [docs/CHROMIUM_PATCH_PLAN.md](file:///Users/mac/Documents/浏览器/docs/CHROMIUM_PATCH_PLAN.md) 与 [docs/DETECTION_BASELINE.md](file:///Users/mac/Documents/浏览器/docs/DETECTION_BASELINE.md)
+- 文档：新增 [docs/CHROMIUM_SOURCE.md](file:///Users/mac/Documents/浏览器/docs/CHROMIUM_SOURCE.md)，定义本地源码、补丁队列、构建和二进制交接流程
 - 自动化：新增 `dokebrowser_engine_config`，可不依赖真实 Doke Chromium 二进制验证配置解析、路径优先级、native feature 开关和 extra args 顺序
 - 自动化：新增 `dokebrowser_profile_launch_config`，可不依赖 IPC/真实浏览器验证启动配置解析与代理参数生成
 - 自动化：新增 `dokebrowser_profile_runtime_manager`，可不启动真实浏览器验证运行态早期错误路径和状态/日志回调
 - 自动化：新增 `dokebrowser_proxy_test_runner`，可不依赖外网验证代理测试请求解析、校验和 fallback URL 规则
 - 自动化：新增 `dokebrowser_openvpn_manager`，可不启动真实 OpenVPN 验证请求解析、校验和参数组装
-- 自动化：Smoke Test 可用于回归关键链路（弱依赖外网可用性）
+- 自动化：Smoke Test 可用于回归关键链路（弱依赖外网可用性），并已覆盖假 Doke Chromium 可执行文件的 `engine.probe` 可用/不可用探测
 
 ## 参考项目（指纹对抗与架构借鉴）
 - XChrome / zchrome（WPF 控制台 + CDP 注入思路）
@@ -264,6 +268,7 @@ cmake --build build -j 8
 
 ## 下一步建议
 - Doke Chromium：接入真实自研二进制后，按检测表验证 `native_fingerprint` / `native_geoip` 能力并逐项关闭 fallback
+- Doke Chromium：准备本地 Chromium checkout，设置 `DOKE_CHROMIUM_SRC`，使用 `patches/chromium/series` 和 `tools/build_doke_chromium.sh` 建立第一版二进制
 - Doke Chromium：接入真实自研二进制后，按检测表验证 `native_fingerprint` / `native_geoip` 能力并逐项关闭 fallback
 - Chromium 源码：建立自研源码/补丁管理方案，优先补 UA-CH、WebRTC、Canvas、WebGL、Audio、screen、plugins、hardware、CDP detection
 - “仅浏览器走 VPN”：引入 tun2socks，将 VPN 出口转为本地代理端口，并仅给目标 Profile 的 CEF 网络栈设置代理

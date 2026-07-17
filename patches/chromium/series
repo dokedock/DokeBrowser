@@ -1,0 +1,4 @@
+# Add Chromium patch filenames here in apply order.
+# Example:
+# 0001-fingerprint-ua-client-hints.patch
+
