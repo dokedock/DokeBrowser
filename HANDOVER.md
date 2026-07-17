@@ -15,6 +15,7 @@
 - `src/agent`：Agent 进程（IPC 服务端、代理测试、OpenVPN 管理）；已拆出 `dokebrowser_agent_core` 静态库，Agent 可执行文件和测试共用核心实现
 - `src/agent/core/OpenVpnManager.*`：OpenVPN 启停、SOCKS 参数、临时认证文件、进程状态和日志转发
 - `src/agent/core/ProfileLaunchConfig.*`：`profile.start` 解析、代理启动参数、Profile 数据目录、debug port 分配、窗口尺寸参数
+- `src/agent/core/ProfileRuntimeManager.*`：Profile 浏览器进程、CDP client、临时扩展、代理映射和 start/stop 运行态编排
 - `src/agent/core/ProxyTestRunner.*`：`proxy.test` / `proxy_pool.test` 的请求解析、校验、URL fallback、异步网络测试与结果组装
 - `src/shared`：共享库（本地 IPC：4 字节长度前缀 + JSON）
 - `src/tests`：自动化测试（启动 agent + IPC + 代理直连自检；Doke Chromium 配置解析与启动参数回归）
@@ -114,6 +115,10 @@ cmake --build build -j 8
   - `{ "type": "hello.ack", "agent": "dokebrowser_agent", "version": 1 }`
 - `log.line`（Agent → App）
   - `{ "type": "log.line", "message": "..." }`
+- `engine.list` / `engine.probe`
+  - `{ "type": "engine.list" }`
+  - `{ "type": "engine.probe", "profile_id": "...", "browser_engine": "doke_chromium", "engine_config_json": "{...}" }`
+  - `engine.probe` 会按当前 Profile 的 `engine_config_json` 检测指定二进制路径，可用于 UI 中“检测”当前 Doke 路径；回包带 `profile_id` 时 UI 会按 Profile 保存检测结果
 - `profile.start/profile.stop`（App → Agent）
   - `{ "type": "profile.start", "profile_id": "...", "profile_name": "...", "data_dir": "...", "chrome_compat": false, "fingerprint_mode": "follow_ip|random", "language": "ja-JP", "timezone": "Asia/Tokyo", "user_agent": "...", "platform": "MacIntel", "hardware_concurrency": 8, "device_memory_gb": 8, "device_scale_factor": 1, "resolution": "1280x720", "touch_enabled": false, "geo_enabled": true, "geo_latitude": 35.6895, "geo_longitude": 139.6917, "geo_accuracy": 1000, "proxy": { "enabled": true, "type":"http|https|socks5|direct", "host":"...", "port": 8080, "username":"", "password":"" } }`
   - 已扩展字段：`browser_engine: "system_chrome|doke_chromium|cef"`、`engine_options: { "humanize": true, "geoip": true }`
@@ -163,6 +168,17 @@ cmake --build build -j 8
 预期输出：
 - `profile_launch_config_ok`
 
+### Profile Runtime Manager Test
+目标：验证 Profile 运行态 manager 的早期错误路径和不支持内核 ID 的状态/日志回调契约。
+
+```bash
+cmake --build build -j 8
+./build/src/tests/dokebrowser_profile_runtime_manager
+```
+
+预期输出：
+- `profile_runtime_manager_ok`
+
 ### Proxy Test Runner Test
 目标：验证 `proxy.test` / `proxy_pool.test` 的请求解析、错误校验、基础结果字段和 URL fallback 规则。
 
@@ -208,22 +224,27 @@ cmake --build build -j 8
 - 开发路线：已确定“DokeBrowser 控制台 + 自研 Doke Chromium 内核”，并新增 [DEVELOPMENT.md](file:///Users/mac/Documents/浏览器/DEVELOPMENT.md)
 - 框架：Profile 已新增 `browser_engine`、`engine_config_json`、`fingerprint_seed`、`start_url`、`humanize_enabled`、`geoip_enabled` 字段；UI 基础信息页已能编辑；`profile.start` 已携带这些字段
 - 框架：Agent 已支持 `engine.list`，可探测 `system_chrome` 与 `doke_chromium`（通过 `DOKE_CHROMIUM_PATH` 或 PATH 中的 `doke-chromium`/`doke_chromium`/`dokebrowser-chromium`）
+- 功能：Agent 已支持 `engine.probe`，可按当前 Profile 的 `engine_config_json` 精确检测 Doke Chromium 路径；App 会按 `profile_id` 记录检测结果，避免不同 Profile 的 Doke 路径状态互相覆盖
+- 功能：基础信息页“内核状态”旁已新增“刷新 / 检测”按钮，可手动刷新全局内核状态或检测当前 Profile 的内核配置；Doke 路径支持通过“选择”按钮从本地文件选择器写入
 - 框架：Agent 已新增 `BrowserEngine` / `BrowserEngineFactory` / `SystemChromeEngine` / `DokeChromiumEngine` 骨架；`profile.start` 已通过 Factory 选择引擎可执行文件
-- 框架：Chrome 启动参数组装已从 `IpcServer` 迁入 `SystemChromeEngine::buildArguments`，`IpcServer` 当前只填充 `LaunchOptions`
-- 框架：代理认证/指纹注入临时扩展生成已从 `IpcServer` 迁入 `SystemChromeEngine::createProfileExtension`，`IpcServer` 仅保留扩展目录清理映射
-- 框架：CDP attach 轮询、`webSocketDebuggerUrl` 解析和 `CdpClient` 创建已迁入 `SystemChromeEngine::attachCdpWhenReady`，`IpcServer` 仅提供 Profile 存活判断、客户端替换和日志回调
-- 框架：浏览器进程创建、stdout/stderr 日志、错误状态、兼容重试、running/stopped/crashed 状态已迁入 `SystemChromeEngine::launchProcess`，`IpcServer` 仅保留 Profile 进程映射和停止请求
+- 框架：Chrome 启动参数组装已从 `IpcServer` 迁入 `SystemChromeEngine::buildArguments`
+- 框架：代理认证/指纹注入临时扩展生成已从 `IpcServer` 迁入 `SystemChromeEngine::createProfileExtension`
+- 框架：CDP attach 轮询、`webSocketDebuggerUrl` 解析和 `CdpClient` 创建已迁入 `SystemChromeEngine::attachCdpWhenReady`
+- 框架：浏览器进程创建、stdout/stderr 日志、错误状态、兼容重试、running/stopped/crashed 状态已迁入 `SystemChromeEngine::launchProcess`
 - 框架：`DokeChromiumEngine` 已有独立 `buildArguments` / `launchProcess` 入口；`profile.start` 已按 `system_chrome` / `doke_chromium` 分流，Doke 路径支持 `engine_config_json.executable` / `binary_path` / `extra_args`
 - 框架：`ProfileStartRequest` 已收拢 `profile.start` 解析；Doke UI 已支持二进制路径、额外参数、原生能力开关
 - 框架：`native_fingerprint` / `native_geoip` 已接入 fallback 分流；开启后分别抑制 Agent 指纹注入或 GeoIP 注入 fallback
 - 框架：`profile.start` 内的 Profile 目录解析、代理启动参数、debug port 分配、窗口尺寸参数已拆成 helper；App 已接入 `engine.list.result` 并在基础信息页展示当前内核可用性
 - 框架：Agent 核心已拆为 `dokebrowser_agent_core` 静态库，`dokebrowser_agent` 与自动化测试共用同一套核心编译产物
-- 框架：`ProfileLaunchConfig` 已从 `IpcServer` 拆出，`IpcServer` 现在更偏 IPC 分发和运行态资源映射
+- 框架：`ProfileLaunchConfig` 已从 `IpcServer` 拆出，负责启动请求解析和纯参数生成
+- 框架：`ProfileRuntimeManager` 已从 `IpcServer` 拆出，负责 Profile 浏览器进程、CDP、临时扩展、代理映射和 start/stop 编排
 - 框架：`ProxyTestRunner` 已从 `IpcServer` 拆出，统一承载 `proxy.test` 与 `proxy_pool.test` 的解析、校验、网络重试和结果组装
 - 框架：`OpenVpnManager` 已从 `IpcServer` 拆出，统一承载 OpenVPN 进程、SOCKS auth 临时文件、状态和日志转发
+- 框架：`IpcServer` 已瘦身为 IPC 路由层，当前主要负责 hello、engine.list、消息分发和统一回包
 - 文档：新增 [docs/CHROMIUM_PATCH_PLAN.md](file:///Users/mac/Documents/浏览器/docs/CHROMIUM_PATCH_PLAN.md) 与 [docs/DETECTION_BASELINE.md](file:///Users/mac/Documents/浏览器/docs/DETECTION_BASELINE.md)
 - 自动化：新增 `dokebrowser_engine_config`，可不依赖真实 Doke Chromium 二进制验证配置解析、路径优先级、native feature 开关和 extra args 顺序
 - 自动化：新增 `dokebrowser_profile_launch_config`，可不依赖 IPC/真实浏览器验证启动配置解析与代理参数生成
+- 自动化：新增 `dokebrowser_profile_runtime_manager`，可不启动真实浏览器验证运行态早期错误路径和状态/日志回调
 - 自动化：新增 `dokebrowser_proxy_test_runner`，可不依赖外网验证代理测试请求解析、校验和 fallback URL 规则
 - 自动化：新增 `dokebrowser_openvpn_manager`，可不启动真实 OpenVPN 验证请求解析、校验和参数组装
 - 自动化：Smoke Test 可用于回归关键链路（弱依赖外网可用性）
@@ -243,7 +264,7 @@ cmake --build build -j 8
 
 ## 下一步建议
 - Doke Chromium：接入真实自研二进制后，按检测表验证 `native_fingerprint` / `native_geoip` 能力并逐项关闭 fallback
-- Agent：继续瘦身 `IpcServer`，下一步优先拆出代理参数解析和 debug port 分配 helper
+- Doke Chromium：接入真实自研二进制后，按检测表验证 `native_fingerprint` / `native_geoip` 能力并逐项关闭 fallback
 - Chromium 源码：建立自研源码/补丁管理方案，优先补 UA-CH、WebRTC、Canvas、WebGL、Audio、screen、plugins、hardware、CDP detection
 - “仅浏览器走 VPN”：引入 tun2socks，将 VPN 出口转为本地代理端口，并仅给目标 Profile 的 CEF 网络栈设置代理
 - OpenVPN 健壮性：进程崩溃检测、重启策略、状态归档与日志落库
@@ -255,9 +276,10 @@ cmake --build build -j 8
 - `cmake --build build -j 8` 已通过
 - `./build/src/tests/dokebrowser_engine_config` 已通过，输出 `engine_config_ok`
 - `./build/src/tests/dokebrowser_profile_launch_config` 已通过，输出 `profile_launch_config_ok`
+- `./build/src/tests/dokebrowser_profile_runtime_manager` 已通过，输出 `profile_runtime_manager_ok`
 - `./build/src/tests/dokebrowser_proxy_test_runner` 已通过，输出 `proxy_test_runner_ok`
 - `./build/src/tests/dokebrowser_openvpn_manager` 已通过，输出 `openvpn_manager_ok`
 - `./build/src/tests/dokebrowser_smoke` 在当前 Codex 沙箱内可能因 `QLocalServer::listen` 返回 `Unknown error 1` 无法创建本地 socket；提权/正常终端运行可通过
-- 本次 `OpenVpnManager` 拆分后，提权复核 `./build/src/tests/dokebrowser_smoke` 已通过，输出 `smoke_ok`
+- 本次 `engine.probe` 功能接入后，提权复核 `./build/src/tests/dokebrowser_smoke` 已通过，输出 `smoke_ok`
 - Smoke Test 对外网弱依赖：即使 `proxy.test` 返回 `ok=false`，只要 Agent/IPC/结果回传链路通，仍会输出 `smoke_ok`
 - 当前机器未配置 `DOKE_CHROMIUM_PATH`，PATH 中也未发现 `doke-chromium` / `doke_chromium` / `dokebrowser-chromium`；真实 doke 启动和检测基准需等自研二进制接入

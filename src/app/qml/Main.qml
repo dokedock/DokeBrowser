@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Dialogs
 import QtQuick.Layouts
 
 ApplicationWindow {
@@ -25,6 +26,12 @@ ApplicationWindow {
         property color text2: "#595959"
         property color primary: "#1677ff"
         property int radius: 10
+    }
+
+    FileDialog {
+        id: dokeExecutableDialog
+        title: "选择 Doke Chromium"
+        onAccepted: AppController.setSelectedProfileDokeExecutableFromUrl(selectedFile)
     }
 
     RowLayout {
@@ -656,11 +663,25 @@ ApplicationWindow {
                                         }
 
                                         Label { text: "内核状态"; color: theme.text2 }
-                                        TextField {
+                                        RowLayout {
                                             Layout.fillWidth: true
                                             Layout.columnSpan: 3
-                                            readOnly: true
-                                            text: AppController.selectedProfileBrowserEngineStatus
+                                            spacing: 8
+                                            TextField {
+                                                Layout.fillWidth: true
+                                                readOnly: true
+                                                text: AppController.selectedProfileBrowserEngineStatus
+                                            }
+                                            Button {
+                                                text: "刷新"
+                                                enabled: AppController.ipcConnected
+                                                onClicked: AppController.refreshEngineStatus()
+                                            }
+                                            Button {
+                                                text: "检测"
+                                                enabled: AppController.ipcConnected && AppController.selectedProfileIndex >= 0
+                                                onClicked: AppController.probeSelectedBrowserEngine()
+                                            }
                                         }
 
                                         Label {
@@ -668,14 +689,23 @@ ApplicationWindow {
                                             color: theme.text2
                                             visible: AppController.selectedProfileBrowserEngine === "doke_chromium"
                                         }
-                                        TextField {
+                                        RowLayout {
                                             Layout.fillWidth: true
                                             Layout.columnSpan: 3
                                             visible: AppController.selectedProfileBrowserEngine === "doke_chromium"
-                                            text: AppController.selectedProfileDokeExecutable
-                                            enabled: AppController.selectedProfileIndex >= 0
-                                            placeholderText: "/path/to/doke_chromium"
-                                            onEditingFinished: AppController.selectedProfileDokeExecutable = text
+                                            spacing: 8
+                                            TextField {
+                                                Layout.fillWidth: true
+                                                text: AppController.selectedProfileDokeExecutable
+                                                enabled: AppController.selectedProfileIndex >= 0
+                                                placeholderText: "/path/to/doke_chromium"
+                                                onEditingFinished: AppController.selectedProfileDokeExecutable = text
+                                            }
+                                            Button {
+                                                text: "选择"
+                                                enabled: AppController.selectedProfileIndex >= 0
+                                                onClicked: dokeExecutableDialog.open()
+                                            }
                                         }
 
                                         Label {

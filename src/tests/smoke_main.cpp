@@ -139,6 +139,36 @@ int main(int argc, char* argv[]) {
     return 8;
   }
 
+  QJsonObject dokeConfig;
+  dokeConfig.insert(QStringLiteral("executable"), QStringLiteral("/tmp/dokebrowser-missing-doke-chromium"));
+  QJsonObject engineProbe;
+  engineProbe.insert(QStringLiteral("type"), QStringLiteral("engine.probe"));
+  engineProbe.insert(QStringLiteral("profile_id"), QStringLiteral("smoke"));
+  engineProbe.insert(QStringLiteral("browser_engine"), QStringLiteral("doke_chromium"));
+  engineProbe.insert(QStringLiteral("engine_config_json"),
+                     QString::fromUtf8(QJsonDocument(dokeConfig).toJson(QJsonDocument::Compact)));
+  framed.send(engineProbe);
+
+  const auto probe = waitForType(&framed, QStringLiteral("engine.probe.result"), 3000);
+  if (!probe.ok || probe.obj.value(QStringLiteral("id")).toString() != QStringLiteral("doke_chromium")) {
+    agent.kill();
+    agent.waitForFinished(2000);
+    qCritical("engine_probe_timeout");
+    return 9;
+  }
+  if (probe.obj.value(QStringLiteral("profile_id")).toString() != QStringLiteral("smoke")) {
+    agent.kill();
+    agent.waitForFinished(2000);
+    qCritical("engine_probe_profile_id_mismatch");
+    return 11;
+  }
+  if (probe.obj.value(QStringLiteral("available")).toBool(true)) {
+    agent.kill();
+    agent.waitForFinished(2000);
+    qCritical("engine_probe_expected_unavailable");
+    return 10;
+  }
+
   QJsonObject proxy;
   proxy.insert(QStringLiteral("enabled"), false);
   proxy.insert(QStringLiteral("type"), QStringLiteral("direct"));

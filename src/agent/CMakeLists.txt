@@ -16,6 +16,8 @@ add_library(dokebrowser_agent_core STATIC
   core/OpenVpnManager.h
   core/ProfileLaunchConfig.cpp
   core/ProfileLaunchConfig.h
+  core/ProfileRuntimeManager.cpp
+  core/ProfileRuntimeManager.h
   core/ProxyTestRunner.cpp
   core/ProxyTestRunner.h
   core/SystemChromeEngine.cpp

@@ -177,6 +177,7 @@ SQLite 迁移要保持向后兼容。旧 Profile 默认：
 - `executable` / `binary_path`: 单 Profile 指定 Doke Chromium 二进制路径；优先级高于 `DOKE_CHROMIUM_PATH` 和 PATH 查找。
 - `extra_args`: Doke Chromium 专属启动参数，会插入到最终 URL 之前。
 - `features`: 声明后续哪些能力由自研 Chromium 原生补丁承载。当前已接入 `native_fingerprint` 和 `native_geoip` 的 fallback 分流；`native_proxy` 和 `native_humanize` 仍为预留。
+- UI 已提供“刷新 / 检测”入口；检测会通过 `engine.probe` 按当前 Profile 的 `engine_config_json` 验证 Doke Chromium 路径。Doke 路径支持从本地文件选择器写入。
 
 ## IPC 规划
 
@@ -200,6 +201,12 @@ SQLite 迁移要保持向后兼容。旧 Profile 默认：
 
 ```json
 { "type": "engine.list" }
+```
+
+当前还支持按 Profile 配置检测；回包带 `profile_id` 时，App 会按 Profile 保存检测结果：
+
+```json
+{ "type": "engine.probe", "profile_id": "...", "browser_engine": "doke_chromium", "engine_config_json": "{...}" }
 ```
 
 返回：
@@ -241,9 +248,12 @@ SQLite 迁移要保持向后兼容。旧 Profile 默认：
 - Agent 核心已收拢为 `dokebrowser_agent_core` 静态库，`dokebrowser_agent` 与自动化测试共用同一套核心实现
 - `OpenVpnManager` 已从 `IpcServer` 拆出，负责 OpenVPN 启停、SOCKS 参数、临时认证文件、进程状态和日志转发
 - `ProfileLaunchConfig` 已从 `IpcServer` 拆出，负责 `profile.start` 解析、代理启动参数、Profile 数据目录、debug port 分配和窗口尺寸参数
+- `ProfileRuntimeManager` 已从 `IpcServer` 拆出，负责 Profile 浏览器进程、CDP、临时扩展、代理映射和 start/stop 运行态编排
 - `ProxyTestRunner` 已从 `IpcServer` 拆出，统一处理 `proxy.test` / `proxy_pool.test` 的请求解析、校验、URL fallback、网络重试和结果组装
+- `IpcServer` 已瘦身为 IPC 路由层，主要负责 hello、engine.list、消息分发和统一回包
 - 已新增 `dokebrowser_engine_config` 自动化测试，覆盖 Doke Chromium 配置解析、二进制路径优先级、native feature 开关和 extra args 顺序
 - 已新增 `dokebrowser_profile_launch_config` 自动化测试，覆盖启动配置解析、内核 ID 归一化、代理参数和窗口尺寸参数
+- 已新增 `dokebrowser_profile_runtime_manager` 自动化测试，覆盖运行态早期错误路径和状态/日志回调
 - 已新增 `dokebrowser_proxy_test_runner` 自动化测试，覆盖代理测试请求解析、错误校验和 fallback URL 规则
 - 已新增 `dokebrowser_openvpn_manager` 自动化测试，覆盖 OpenVPN 请求解析、错误校验和参数组装
 - 保持现有 smoke test 通过

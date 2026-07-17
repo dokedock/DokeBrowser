@@ -5,6 +5,7 @@
 #include <QHash>
 #include <QSet>
 #include <QStringList>
+#include <QUrl>
 
 #include "LogListModel.h"
 #include "ProfileListModel.h"
@@ -245,6 +246,9 @@ public:
 
   Q_INVOKABLE void startAgent();
   Q_INVOKABLE void stopAgent();
+  Q_INVOKABLE void refreshEngineStatus();
+  Q_INVOKABLE void probeSelectedBrowserEngine();
+  Q_INVOKABLE void setSelectedProfileDokeExecutableFromUrl(const QUrl& url);
   Q_INVOKABLE void clearLogs();
   Q_INVOKABLE void copyLogsToClipboard();
 
@@ -372,5 +376,6 @@ private:
   bool m_proxyPoolAssignPending = false;
   QStringList m_proxyPoolAssignPendingProfileIds;
   QHash<QString, QString> m_engineStatusById;
+  QHash<QString, QString> m_engineStatusByProfileId;
   QHash<QString, QString> m_vpnStatusByProfileId;
 };

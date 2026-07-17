@@ -109,6 +109,10 @@ void IpcClient::onJsonReceived(const QJsonObject& obj) {
   }
   if (type == QStringLiteral("engine.list.result")) {
     emit engineListReceived(obj);
+    return;
+  }
+  if (type == QStringLiteral("engine.probe.result")) {
+    emit engineProbeReceived(obj);
   }
 }
 

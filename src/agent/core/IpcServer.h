@@ -1,16 +1,12 @@
 #pragma once
 
-#include <QHash>
-#include <QSet>
 #include <QObject>
 #include <QJsonObject>
 
 class FramedJsonSocket;
 class QLocalServer;
-class QProcess;
-class CdpClient;
-class HttpProxyMapper;
 class OpenVpnManager;
+class ProfileRuntimeManager;
 
 class IpcServer : public QObject {
   Q_OBJECT
@@ -33,9 +29,5 @@ private:
   QLocalServer* m_server = nullptr;
   FramedJsonSocket* m_peer = nullptr;
   OpenVpnManager* m_openVpnManager = nullptr;
-  QHash<QString, QProcess*> m_profileProcByProfileId;
-  QHash<QString, QString> m_chromeProxyAuthExtDirByProfileId;
-  QHash<QString, HttpProxyMapper*> m_proxyMapperByProfileId;
-  QHash<QString, CdpClient*> m_cdpByProfileId;
-  QSet<QString> m_profileStopRequested;
+  ProfileRuntimeManager* m_profileRuntimeManager = nullptr;
 };

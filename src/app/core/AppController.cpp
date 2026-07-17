@@ -100,6 +100,16 @@ QStringList linesToList(const QString& text) {
   }
   return out;
 }
+
+QString engineStatusText(const QJsonObject& engine) {
+  const bool available = engine.value(QStringLiteral("available")).toBool(false);
+  if (available) {
+    const QString executable = engine.value(QStringLiteral("executable")).toString();
+    return executable.isEmpty() ? QStringLiteral("可用") : QStringLiteral("可用: %1").arg(executable);
+  }
+  const QString error = engine.value(QStringLiteral("error")).toString(QStringLiteral("not_available"));
+  return QStringLiteral("不可用: %1").arg(error);
+}
 }
 
 AppController::AppController(QObject* parent) : QObject(parent) {
@@ -128,9 +138,7 @@ AppController::AppController(QObject* parent) : QObject(parent) {
     }
     appendLogLine(QStringLiteral("ipc_connected=%1").arg(now ? "true" : "false"), QStringLiteral("ipc"));
     if (now) {
-      QJsonObject msg;
-      msg.insert(QStringLiteral("type"), QStringLiteral("engine.list"));
-      m_ipc->send(msg);
+      refreshEngineStatus();
     }
   });
 
@@ -305,15 +313,24 @@ AppController::AppController(QObject* parent) : QObject(parent) {
       if (id.isEmpty()) {
         continue;
       }
-      const bool available = engine.value(QStringLiteral("available")).toBool(false);
-      if (available) {
-        const QString executable = engine.value(QStringLiteral("executable")).toString();
-        m_engineStatusById.insert(id, executable.isEmpty() ? QStringLiteral("可用") : QStringLiteral("可用: %1").arg(executable));
-      } else {
-        const QString error = engine.value(QStringLiteral("error")).toString(QStringLiteral("not_available"));
-        m_engineStatusById.insert(id, QStringLiteral("不可用: %1").arg(error));
-      }
+      m_engineStatusById.insert(id, engineStatusText(engine));
     }
+    emit selectedProfileChanged();
+  });
+
+  QObject::connect(m_ipc, &IpcClient::engineProbeReceived, this, [this](const QJsonObject& obj) {
+    const QString id = obj.value(QStringLiteral("id")).toString().trimmed();
+    if (id.isEmpty()) {
+      return;
+    }
+    const QString status = engineStatusText(obj);
+    const QString profileId = obj.value(QStringLiteral("profile_id")).toString().trimmed();
+    if (profileId.isEmpty()) {
+      m_engineStatusById.insert(id, status);
+    } else {
+      m_engineStatusByProfileId.insert(profileId, status);
+    }
+    appendLogLine(QStringLiteral("engine_probe: %1 %2").arg(id, status), QStringLiteral("engine"), profileId);
     emit selectedProfileChanged();
   });
 
@@ -382,6 +399,10 @@ ProfileListModel::ProfileItem AppController::selectedProfileItem() const {
 void AppController::updateSelectedProfileItem(const ProfileListModel::ProfileItem& item) {
   if (!hasSelectedProfile()) {
     return;
+  }
+  const auto before = m_profiles->items().at(m_selectedProfileIndex);
+  if (before.browserEngine != item.browserEngine || before.engineConfigJson != item.engineConfigJson) {
+    m_engineStatusByProfileId.remove(item.id);
   }
   m_profiles->updateAt(m_selectedProfileIndex, item);
   persistProfile(item);
@@ -717,6 +738,10 @@ void AppController::setSelectedProfileBrowserEngine(const QString& value) {
 QString AppController::selectedProfileBrowserEngineStatus() const {
   if (!hasSelectedProfile()) {
     return {};
+  }
+  const QString profileId = selectedProfileId();
+  if (m_engineStatusByProfileId.contains(profileId)) {
+    return m_engineStatusByProfileId.value(profileId);
   }
   const QString engine = selectedProfileBrowserEngine();
   return m_engineStatusById.value(engine, QStringLiteral("未检测"));
@@ -2667,6 +2692,46 @@ void AppController::stopAgent() {
   if (!m_agent->waitForFinished(500)) {
     m_agent->kill();
   }
+}
+
+void AppController::refreshEngineStatus() {
+  if (!m_ipcConnected || !m_ipc) {
+    appendLogLine(QStringLiteral("engine_refresh_failed: ipc_not_connected"), QStringLiteral("engine"));
+    return;
+  }
+
+  QJsonObject msg;
+  msg.insert(QStringLiteral("type"), QStringLiteral("engine.list"));
+  m_ipc->send(msg);
+  appendLogLine(QStringLiteral("engine_refresh requested"), QStringLiteral("engine"));
+}
+
+void AppController::probeSelectedBrowserEngine() {
+  if (!hasSelectedProfile()) {
+    return;
+  }
+  if (!m_ipcConnected || !m_ipc) {
+    appendLogLine(QStringLiteral("engine_probe_failed: ipc_not_connected"), QStringLiteral("engine"), selectedProfileId());
+    return;
+  }
+
+  const auto item = selectedProfileItem();
+  const QString engine = item.browserEngine.trimmed().isEmpty() ? QStringLiteral("system_chrome") : item.browserEngine.trimmed();
+  QJsonObject msg;
+  msg.insert(QStringLiteral("type"), QStringLiteral("engine.probe"));
+  msg.insert(QStringLiteral("profile_id"), item.id);
+  msg.insert(QStringLiteral("browser_engine"), engine);
+  msg.insert(QStringLiteral("engine_config_json"), item.engineConfigJson);
+  m_ipc->send(msg);
+  appendLogLine(QStringLiteral("engine_probe requested: %1").arg(engine), QStringLiteral("engine"), item.id);
+}
+
+void AppController::setSelectedProfileDokeExecutableFromUrl(const QUrl& url) {
+  const QString path = url.isLocalFile() ? url.toLocalFile() : url.toString();
+  if (path.trimmed().isEmpty()) {
+    return;
+  }
+  setSelectedProfileDokeExecutable(path);
 }
 
 void AppController::clearLogs() {

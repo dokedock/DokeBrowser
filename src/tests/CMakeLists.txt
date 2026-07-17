@@ -24,6 +24,14 @@ target_link_libraries(dokebrowser_profile_launch_config PRIVATE
   dokebrowser_agent_core
 )
 
+add_executable(dokebrowser_profile_runtime_manager
+  profile_runtime_manager_main.cpp
+)
+
+target_link_libraries(dokebrowser_profile_runtime_manager PRIVATE
+  dokebrowser_agent_core
+)
+
 add_executable(dokebrowser_proxy_test_runner
   proxy_test_runner_main.cpp
 )
