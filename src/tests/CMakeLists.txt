@@ -31,3 +31,11 @@ add_executable(dokebrowser_proxy_test_runner
 target_link_libraries(dokebrowser_proxy_test_runner PRIVATE
   dokebrowser_agent_core
 )
+
+add_executable(dokebrowser_openvpn_manager
+  openvpn_manager_main.cpp
+)
+
+target_link_libraries(dokebrowser_openvpn_manager PRIVATE
+  dokebrowser_agent_core
+)

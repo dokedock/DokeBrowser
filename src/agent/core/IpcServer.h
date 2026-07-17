@@ -10,6 +10,7 @@ class QLocalServer;
 class QProcess;
 class CdpClient;
 class HttpProxyMapper;
+class OpenVpnManager;
 
 class IpcServer : public QObject {
   Q_OBJECT
@@ -31,8 +32,7 @@ private:
 
   QLocalServer* m_server = nullptr;
   FramedJsonSocket* m_peer = nullptr;
-  QHash<QString, QProcess*> m_openvpnByProfileId;
-  QHash<QString, QString> m_openvpnSocksAuthFileByProfileId;
+  OpenVpnManager* m_openVpnManager = nullptr;
   QHash<QString, QProcess*> m_profileProcByProfileId;
   QHash<QString, QString> m_chromeProxyAuthExtDirByProfileId;
   QHash<QString, HttpProxyMapper*> m_proxyMapperByProfileId;

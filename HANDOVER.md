@@ -13,6 +13,7 @@
 - [src/CMakeLists.txt](file:///Users/mac/Documents/浏览器/src/CMakeLists.txt)：Qt6 依赖与子目录
 - `src/app`：Qt6 + QML 控制台（环境列表、基础信息、代理、VPN、日志）
 - `src/agent`：Agent 进程（IPC 服务端、代理测试、OpenVPN 管理）；已拆出 `dokebrowser_agent_core` 静态库，Agent 可执行文件和测试共用核心实现
+- `src/agent/core/OpenVpnManager.*`：OpenVPN 启停、SOCKS 参数、临时认证文件、进程状态和日志转发
 - `src/agent/core/ProfileLaunchConfig.*`：`profile.start` 解析、代理启动参数、Profile 数据目录、debug port 分配、窗口尺寸参数
 - `src/agent/core/ProxyTestRunner.*`：`proxy.test` / `proxy_pool.test` 的请求解析、校验、URL fallback、异步网络测试与结果组装
 - `src/shared`：共享库（本地 IPC：4 字节长度前缀 + JSON）
@@ -173,6 +174,17 @@ cmake --build build -j 8
 预期输出：
 - `proxy_test_runner_ok`
 
+### OpenVPN Manager Test
+目标：验证 OpenVPN start 请求解析、必填项校验、`--config` / `--socks-proxy` 参数组装。
+
+```bash
+cmake --build build -j 8
+./build/src/tests/dokebrowser_openvpn_manager
+```
+
+预期输出：
+- `openvpn_manager_ok`
+
 ### Smoke Test
 目标：验证“启动 agent → 建立 IPC → hello → proxy.test(直连) → 收到 proxy.test.result”全链路。
 
@@ -208,10 +220,12 @@ cmake --build build -j 8
 - 框架：Agent 核心已拆为 `dokebrowser_agent_core` 静态库，`dokebrowser_agent` 与自动化测试共用同一套核心编译产物
 - 框架：`ProfileLaunchConfig` 已从 `IpcServer` 拆出，`IpcServer` 现在更偏 IPC 分发和运行态资源映射
 - 框架：`ProxyTestRunner` 已从 `IpcServer` 拆出，统一承载 `proxy.test` 与 `proxy_pool.test` 的解析、校验、网络重试和结果组装
+- 框架：`OpenVpnManager` 已从 `IpcServer` 拆出，统一承载 OpenVPN 进程、SOCKS auth 临时文件、状态和日志转发
 - 文档：新增 [docs/CHROMIUM_PATCH_PLAN.md](file:///Users/mac/Documents/浏览器/docs/CHROMIUM_PATCH_PLAN.md) 与 [docs/DETECTION_BASELINE.md](file:///Users/mac/Documents/浏览器/docs/DETECTION_BASELINE.md)
 - 自动化：新增 `dokebrowser_engine_config`，可不依赖真实 Doke Chromium 二进制验证配置解析、路径优先级、native feature 开关和 extra args 顺序
 - 自动化：新增 `dokebrowser_profile_launch_config`，可不依赖 IPC/真实浏览器验证启动配置解析与代理参数生成
 - 自动化：新增 `dokebrowser_proxy_test_runner`，可不依赖外网验证代理测试请求解析、校验和 fallback URL 规则
+- 自动化：新增 `dokebrowser_openvpn_manager`，可不启动真实 OpenVPN 验证请求解析、校验和参数组装
 - 自动化：Smoke Test 可用于回归关键链路（弱依赖外网可用性）
 
 ## 参考项目（指纹对抗与架构借鉴）
@@ -242,7 +256,8 @@ cmake --build build -j 8
 - `./build/src/tests/dokebrowser_engine_config` 已通过，输出 `engine_config_ok`
 - `./build/src/tests/dokebrowser_profile_launch_config` 已通过，输出 `profile_launch_config_ok`
 - `./build/src/tests/dokebrowser_proxy_test_runner` 已通过，输出 `proxy_test_runner_ok`
+- `./build/src/tests/dokebrowser_openvpn_manager` 已通过，输出 `openvpn_manager_ok`
 - `./build/src/tests/dokebrowser_smoke` 在当前 Codex 沙箱内可能因 `QLocalServer::listen` 返回 `Unknown error 1` 无法创建本地 socket；提权/正常终端运行可通过
-- 本次 `ProxyTestRunner` 拆分后，提权复核 `./build/src/tests/dokebrowser_smoke` 已通过，输出 `smoke_ok`
+- 本次 `OpenVpnManager` 拆分后，提权复核 `./build/src/tests/dokebrowser_smoke` 已通过，输出 `smoke_ok`
 - Smoke Test 对外网弱依赖：即使 `proxy.test` 返回 `ok=false`，只要 Agent/IPC/结果回传链路通，仍会输出 `smoke_ok`
 - 当前机器未配置 `DOKE_CHROMIUM_PATH`，PATH 中也未发现 `doke-chromium` / `doke_chromium` / `dokebrowser-chromium`；真实 doke 启动和检测基准需等自研二进制接入

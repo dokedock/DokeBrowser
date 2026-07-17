@@ -12,6 +12,8 @@ add_library(dokebrowser_agent_core STATIC
   core/FingerprintMetadata.h
   core/HttpProxyMapper.cpp
   core/HttpProxyMapper.h
+  core/OpenVpnManager.cpp
+  core/OpenVpnManager.h
   core/ProfileLaunchConfig.cpp
   core/ProfileLaunchConfig.h
   core/ProxyTestRunner.cpp

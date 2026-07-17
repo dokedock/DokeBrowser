@@ -4,20 +4,19 @@
 #include "CdpClient.h"
 #include "DokeChromiumEngine.h"
 #include "HttpProxyMapper.h"
+#include "OpenVpnManager.h"
 #include "ProfileLaunchConfig.h"
 #include "ProxyTestRunner.h"
 #include "SystemChromeEngine.h"
 #include "shared/ipc/FramedJsonSocket.h"
 #include "shared/ipc/IpcNames.h"
 
-#include <QFile>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QLocalServer>
 #include <QLocalSocket>
 #include <QPointer>
 #include <QProcess>
-#include <QTemporaryFile>
 #include <QTimer>
 #include <QDir>
 #include <functional>
@@ -39,6 +38,7 @@ QJsonObject engineInfo(const BrowserEngineDescriptor& engine) {
 
 IpcServer::IpcServer(QObject* parent) : QObject(parent) {
   m_server = new QLocalServer(this);
+  m_openVpnManager = new OpenVpnManager(this);
   QObject::connect(m_server, &QLocalServer::newConnection, this, &IpcServer::onNewConnection);
 }
 
@@ -70,15 +70,6 @@ IpcServer::~IpcServer() {
     }
   }
 
-  const auto keys = m_openvpnByProfileId.keys();
-  for (const auto& k : keys) {
-    QProcess* p = m_openvpnByProfileId.take(k);
-    if (p) {
-      p->kill();
-      p->deleteLater();
-    }
-  }
-
   const auto extKeys = m_chromeProxyAuthExtDirByProfileId.keys();
   for (const auto& k : extKeys) {
     const QString dir = m_chromeProxyAuthExtDirByProfileId.take(k);
@@ -87,13 +78,6 @@ IpcServer::~IpcServer() {
     }
   }
 
-  const auto authKeys = m_openvpnSocksAuthFileByProfileId.keys();
-  for (const auto& k : authKeys) {
-    const QString path = m_openvpnSocksAuthFileByProfileId.take(k);
-    if (!path.isEmpty()) {
-      QFile::remove(path);
-    }
-  }
 }
 
 bool IpcServer::start() {
@@ -511,156 +495,33 @@ void IpcServer::onPeerJson(const QJsonObject& obj) {
   }
 
   if (type == QStringLiteral("vpn.openvpn.start")) {
-    const QString profileId = obj.value(QStringLiteral("profile_id")).toString();
-    const QString exe = obj.value(QStringLiteral("exe")).toString(QStringLiteral("openvpn"));
-    const QString config = obj.value(QStringLiteral("config")).toString();
-    const QJsonObject socks = obj.value(QStringLiteral("socks")).toObject();
-    const bool socksEnabled = socks.value(QStringLiteral("enabled")).toBool(false);
-    const QString socksHost = socks.value(QStringLiteral("host")).toString();
-    const int socksPort = socks.value(QStringLiteral("port")).toInt(0);
-    const QString socksUser = socks.value(QStringLiteral("username")).toString();
-    const QString socksPass = socks.value(QStringLiteral("password")).toString();
-
-    auto sendStatus = [this, profileId](const QString& status, const QString& error) {
-      if (!m_peer) {
-        return;
-      }
-      QJsonObject msg;
-      msg.insert(QStringLiteral("type"), QStringLiteral("vpn.status"));
-      msg.insert(QStringLiteral("profile_id"), profileId);
-      msg.insert(QStringLiteral("status"), status);
-      msg.insert(QStringLiteral("error"), error);
-      m_peer->send(msg);
-    };
-
-    if (profileId.isEmpty()) {
-      sendStatus(QStringLiteral("error"), QStringLiteral("missing_profile_id"));
-      return;
-    }
-
-    QProcess* existing = m_openvpnByProfileId.value(profileId);
-    if (existing && existing->state() != QProcess::NotRunning) {
-      sendStatus(QStringLiteral("running"), QString());
-      return;
-    }
-
-    if (config.isEmpty()) {
-      sendStatus(QStringLiteral("error"), QStringLiteral("missing_config"));
-      return;
-    }
-
-    QString socksAuthFile;
-    if (socksEnabled) {
-      if (socksHost.isEmpty() || socksPort <= 0) {
-        sendStatus(QStringLiteral("error"), QStringLiteral("invalid_socks_proxy"));
-        return;
-      }
-
-      if (!socksUser.isEmpty() || !socksPass.isEmpty()) {
-        QTemporaryFile tf;
-        tf.setAutoRemove(false);
-        if (!tf.open()) {
-          sendStatus(QStringLiteral("error"), QStringLiteral("socks_authfile_open_failed"));
-          return;
-        }
-        tf.write(socksUser.toUtf8());
-        tf.write("\n");
-        tf.write(socksPass.toUtf8());
-        tf.write("\n");
-        tf.flush();
-        tf.close();
-        socksAuthFile = tf.fileName();
-        m_openvpnSocksAuthFileByProfileId.insert(profileId, socksAuthFile);
-      }
-    }
-
-    auto* p = new QProcess(this);
-    m_openvpnByProfileId.insert(profileId, p);
-
-    QStringList args;
-    args << QStringLiteral("--config") << config;
-    if (socksEnabled) {
-      args << QStringLiteral("--socks-proxy") << socksHost << QString::number(socksPort);
-      if (!socksAuthFile.isEmpty()) {
-        args << socksAuthFile;
-      }
-    }
-
-    p->setProgram(exe.isEmpty() ? QStringLiteral("openvpn") : exe);
-    p->setArguments(args);
-
-    const QString shortId = profileId.left(8);
-    QObject::connect(p, &QProcess::started, this, [this, profileId, shortId, sendStatus]() mutable {
-      sendStatus(QStringLiteral("running"), QString());
-      if (m_peer) {
-        QJsonObject log;
-        log.insert(QStringLiteral("type"), QStringLiteral("log.line"));
-        log.insert(QStringLiteral("message"), QStringLiteral("openvpn[%1] started").arg(shortId));
-        m_peer->send(log);
-      }
-    });
-
-    QObject::connect(p, &QProcess::readyReadStandardOutput, this, [this, p, shortId]() {
-      if (!m_peer) {
-        return;
-      }
-      const auto lines = QString::fromUtf8(p->readAllStandardOutput()).split('\n', Qt::SkipEmptyParts);
-      for (const auto& line : lines) {
-        QJsonObject log;
-        log.insert(QStringLiteral("type"), QStringLiteral("log.line"));
-        log.insert(QStringLiteral("message"), QStringLiteral("openvpn[%1] %2").arg(shortId, line));
-        m_peer->send(log);
-      }
-    });
-
-    QObject::connect(p, &QProcess::readyReadStandardError, this, [this, p, shortId]() {
-      if (!m_peer) {
-        return;
-      }
-      const auto lines = QString::fromUtf8(p->readAllStandardError()).split('\n', Qt::SkipEmptyParts);
-      for (const auto& line : lines) {
-        QJsonObject log;
-        log.insert(QStringLiteral("type"), QStringLiteral("log.line"));
-        log.insert(QStringLiteral("message"), QStringLiteral("openvpn[%1] %2").arg(shortId, line));
-        m_peer->send(log);
-      }
-    });
-
-    QObject::connect(p, &QProcess::errorOccurred, this, [this, profileId, shortId, sendStatus](QProcess::ProcessError) mutable {
-      sendStatus(QStringLiteral("error"), QStringLiteral("openvpn_process_error"));
-      if (m_peer) {
-        QJsonObject log;
-        log.insert(QStringLiteral("type"), QStringLiteral("log.line"));
-        log.insert(QStringLiteral("message"), QStringLiteral("openvpn[%1] error").arg(shortId));
-        m_peer->send(log);
-      }
-    });
-
-    QObject::connect(p, &QProcess::finished, this, [this, profileId, shortId, sendStatus](int exitCode, QProcess::ExitStatus st) mutable {
-      m_openvpnByProfileId.remove(profileId);
-      sendStatus(st == QProcess::NormalExit ? QStringLiteral("stopped") : QStringLiteral("crashed"),
-                 QStringLiteral("exitCode=%1").arg(exitCode));
-
-      const QString authFile = m_openvpnSocksAuthFileByProfileId.take(profileId);
-      if (!authFile.isEmpty()) {
-        QFile::remove(authFile);
-      }
-
-      if (m_peer) {
-        QJsonObject log;
-        log.insert(QStringLiteral("type"), QStringLiteral("log.line"));
-        log.insert(QStringLiteral("message"), QStringLiteral("openvpn[%1] finished").arg(shortId));
-        m_peer->send(log);
-      }
-    });
-
-    p->start();
+    m_openVpnManager->startOpenVpn(
+        obj,
+        [this](const QString& profileId, const QString& status, const QString& error) {
+          if (!m_peer) {
+            return;
+          }
+          QJsonObject msg;
+          msg.insert(QStringLiteral("type"), QStringLiteral("vpn.status"));
+          msg.insert(QStringLiteral("profile_id"), profileId);
+          msg.insert(QStringLiteral("status"), status);
+          msg.insert(QStringLiteral("error"), error);
+          m_peer->send(msg);
+        },
+        [this](const QString& message) {
+          if (!m_peer) {
+            return;
+          }
+          QJsonObject log;
+          log.insert(QStringLiteral("type"), QStringLiteral("log.line"));
+          log.insert(QStringLiteral("message"), message);
+          m_peer->send(log);
+        });
     return;
   }
 
   if (type == QStringLiteral("vpn.openvpn.stop")) {
-    const QString profileId = obj.value(QStringLiteral("profile_id")).toString();
-    auto sendStatus = [this, profileId](const QString& status, const QString& error) {
+    m_openVpnManager->stopOpenVpn(obj, [this](const QString& profileId, const QString& status, const QString& error) {
       if (!m_peer) {
         return;
       }
@@ -670,28 +531,7 @@ void IpcServer::onPeerJson(const QJsonObject& obj) {
       msg.insert(QStringLiteral("status"), status);
       msg.insert(QStringLiteral("error"), error);
       m_peer->send(msg);
-    };
-
-    if (profileId.isEmpty()) {
-      sendStatus(QStringLiteral("error"), QStringLiteral("missing_profile_id"));
-      return;
-    }
-
-    QProcess* p = m_openvpnByProfileId.value(profileId);
-    if (!p) {
-      sendStatus(QStringLiteral("stopped"), QString());
-      return;
-    }
-
-    p->terminate();
-    QPointer<QProcess> pp(p);
-    QTimer::singleShot(1500, this, [pp]() {
-      if (pp && pp->state() != QProcess::NotRunning) {
-        pp->kill();
-      }
     });
-
-    sendStatus(QStringLiteral("stopping"), QString());
     return;
   }
 }

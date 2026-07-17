@@ -239,11 +239,13 @@ SQLite 迁移要保持向后兼容。旧 Profile 默认：
 - 当前浏览器进程创建、stdout/stderr 日志、错误状态、兼容重试、running/stopped/crashed 状态已迁入 `SystemChromeEngine::launchProcess`
 - 当前 `DokeChromiumEngine` 已有独立 `buildArguments` / `launchProcess` 入口；`profile.start` 已按 `system_chrome` / `doke_chromium` 分流
 - Agent 核心已收拢为 `dokebrowser_agent_core` 静态库，`dokebrowser_agent` 与自动化测试共用同一套核心实现
+- `OpenVpnManager` 已从 `IpcServer` 拆出，负责 OpenVPN 启停、SOCKS 参数、临时认证文件、进程状态和日志转发
 - `ProfileLaunchConfig` 已从 `IpcServer` 拆出，负责 `profile.start` 解析、代理启动参数、Profile 数据目录、debug port 分配和窗口尺寸参数
 - `ProxyTestRunner` 已从 `IpcServer` 拆出，统一处理 `proxy.test` / `proxy_pool.test` 的请求解析、校验、URL fallback、网络重试和结果组装
 - 已新增 `dokebrowser_engine_config` 自动化测试，覆盖 Doke Chromium 配置解析、二进制路径优先级、native feature 开关和 extra args 顺序
 - 已新增 `dokebrowser_profile_launch_config` 自动化测试，覆盖启动配置解析、内核 ID 归一化、代理参数和窗口尺寸参数
 - 已新增 `dokebrowser_proxy_test_runner` 自动化测试，覆盖代理测试请求解析、错误校验和 fallback URL 规则
+- 已新增 `dokebrowser_openvpn_manager` 自动化测试，覆盖 OpenVPN 请求解析、错误校验和参数组装
 - 保持现有 smoke test 通过
 
 ### M4: Doke Chromium 进程启动
