@@ -70,3 +70,21 @@ or set `engine_config_json.executable` from the UI Doke path selector.
 
 Use the UI "Detect" button or IPC `engine.probe` to verify the path before launching a Profile.
 
+Command-line probe:
+
+```bash
+python3 tools/ipc_cli.py engine-list
+python3 tools/ipc_cli.py probe-engine doke_chromium /absolute/path/to/doke_chromium
+```
+
+Command-line launch through Agent:
+
+```bash
+python3 tools/ipc_cli.py start-doke cli-doke /absolute/path/to/doke_chromium /tmp/doke_cli_profile about:blank
+```
+
+Stop the launched Profile:
+
+```bash
+python3 tools/ipc_cli.py stop cli-doke
+```

@@ -42,6 +42,22 @@ def read_loop(sock, seconds):
             pass
 
 
+def engine_config(executable="", extra_args=None, native=False):
+    cfg = {}
+    if executable:
+        cfg["executable"] = executable
+    if extra_args:
+        cfg["extra_args"] = extra_args
+    if native:
+        cfg["features"] = {
+            "native_fingerprint": True,
+            "native_proxy": True,
+            "native_geoip": True,
+            "native_humanize": True,
+        }
+    return json.dumps(cfg, separators=(",", ":"))
+
+
 def main():
     sp = sock_path()
     cmd = sys.argv[1] if len(sys.argv) > 1 else "hello"
@@ -53,6 +69,49 @@ def main():
     if cmd == "hello":
         send(s, {"type": "hello", "client": "cli"})
         read_loop(s, 2.0)
+        return
+
+    if cmd == "engine-list":
+        send(s, {"type": "engine.list"})
+        read_loop(s, 2.0)
+        return
+
+    if cmd == "probe-engine":
+        engine = sys.argv[2] if len(sys.argv) > 2 else "doke_chromium"
+        executable = sys.argv[3] if len(sys.argv) > 3 else os.environ.get("DOKE_CHROMIUM_PATH", "")
+        profile_id = sys.argv[4] if len(sys.argv) > 4 else "cli-probe"
+        send(
+            s,
+            {
+                "type": "engine.probe",
+                "profile_id": profile_id,
+                "browser_engine": engine,
+                "engine_config_json": engine_config(executable),
+            },
+        )
+        read_loop(s, 2.0)
+        return
+
+    if cmd == "start-doke":
+        profile_id = sys.argv[2] if len(sys.argv) > 2 else "cli-doke"
+        executable = sys.argv[3] if len(sys.argv) > 3 else os.environ.get("DOKE_CHROMIUM_PATH", "")
+        data_dir = sys.argv[4] if len(sys.argv) > 4 else os.path.join(os.environ.get("TMPDIR") or "/tmp", "doke_cli_profile")
+        url = sys.argv[5] if len(sys.argv) > 5 else "about:blank"
+        extra_args = sys.argv[6:] if len(sys.argv) > 6 else []
+        os.makedirs(data_dir, exist_ok=True)
+        send(
+            s,
+            {
+                "type": "profile.start",
+                "profile_id": profile_id,
+                "profile_name": profile_id,
+                "data_dir": data_dir,
+                "url": url,
+                "browser_engine": "doke_chromium",
+                "engine_config_json": engine_config(executable, extra_args),
+            },
+        )
+        read_loop(s, 8.0)
         return
 
     if cmd == "start":

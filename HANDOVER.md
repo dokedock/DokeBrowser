@@ -20,6 +20,7 @@
 - `patches/chromium`：自研 Chromium 补丁队列占位，`series` 定义应用顺序
 - `third_party`：本地第三方源码工作区说明；完整 Chromium checkout 不提交到仓库
 - `tools/apply_chromium_patches.sh` / `tools/build_doke_chromium.sh`：本地补丁应用与构建入口，不负责下载源码
+- `tools/ipc_cli.py`：本地 IPC 调试工具，支持 `engine-list`、`probe-engine`、`start-doke`、`stop`
 - `src/shared`：共享库（本地 IPC：4 字节长度前缀 + JSON）
 - `src/tests`：自动化测试（启动 agent + IPC + 代理直连自检；Doke Chromium 配置解析与启动参数回归）
 - [DEVELOPMENT.md](file:///Users/mac/Documents/浏览器/DEVELOPMENT.md)：新开发路线文档，记录 DokeBrowser 控制台 + 自研 Doke Chromium 方案
@@ -229,6 +230,7 @@ cmake --build build -j 8
 - 框架：Agent 已支持 `engine.list`，可探测 `system_chrome` 与 `doke_chromium`（通过 `DOKE_CHROMIUM_PATH` 或 PATH 中的 `doke-chromium`/`doke_chromium`/`dokebrowser-chromium`）
 - 功能：Agent 已支持 `engine.probe`，可按当前 Profile 的 `engine_config_json` 精确检测 Doke Chromium 路径；App 会按 `profile_id` 记录检测结果，避免不同 Profile 的 Doke 路径状态互相覆盖
 - 功能：基础信息页“内核状态”旁已新增“刷新 / 检测”按钮，可手动刷新全局内核状态或检测当前 Profile 的内核配置；Doke 路径支持通过“选择”按钮从本地文件选择器写入
+- 工具：`tools/ipc_cli.py` 已支持命令行 `engine-list` / `probe-engine` / `start-doke`，便于真实二进制接入时不打开 UI 也能验证路径和启动链路
 - 框架：Agent 已新增 `BrowserEngine` / `BrowserEngineFactory` / `SystemChromeEngine` / `DokeChromiumEngine` 骨架；`profile.start` 已通过 Factory 选择引擎可执行文件
 - 框架：Chrome 启动参数组装已从 `IpcServer` 迁入 `SystemChromeEngine::buildArguments`
 - 框架：代理认证/指纹注入临时扩展生成已从 `IpcServer` 迁入 `SystemChromeEngine::createProfileExtension`
