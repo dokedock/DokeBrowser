@@ -188,6 +188,7 @@ SQLite 迁移要保持向后兼容。旧 Profile 默认：
 - UI 已提供“刷新 / 检测”入口；检测会通过 `engine.probe` 按当前 Profile 的 `engine_config_json` 验证 Doke Chromium 路径，并拒绝普通文件或无执行权限文件。Doke 路径支持从本地文件选择器写入。
 - `engine.probe` 对可用的 `doke_chromium` 会先短超时执行 `--doke-probe`，期望二进制返回 JSON：`{"probe_protocol":1,"version":"...","capabilities":["native_fingerprint"]}`。成功时回包带 `version`、`probe_protocol`、`native_capabilities`；失败时带 `native_probe_error` 并 fallback 到 `--version`，回包带 `version` 或 `version_error`。`capabilities` 仍表示当前 Profile 在 `features` 中启用/声明的能力。
 - Doke 路径相关错误码：`doke_chromium_not_found`、`doke_chromium_path_missing`、`doke_chromium_path_not_file`、`doke_chromium_path_not_executable`。App 会把这些内部码转换为中文状态文案。
+- 真实二进制接入前先通过 `python3 tools/doke_probe_check.py /path/to/doke_chromium` 验证 `--doke-probe` 契约。
 
 ## IPC 规划
 

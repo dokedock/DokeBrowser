@@ -231,6 +231,7 @@ cmake --build build -j 8
 - 功能：Agent 已支持 `engine.probe`，可按当前 Profile 的 `engine_config_json` 精确检测 Doke Chromium 路径；显式路径必须存在且可执行，坏路径不会 fallback 到 `DOKE_CHROMIUM_PATH` / PATH；错误码可区分 not found / missing / not file / not executable；可用时优先读取 `--doke-probe` JSON 握手，回包区分 Profile 声明能力 `capabilities` 与二进制自报能力 `native_capabilities`，App 会转换为中文状态文案并按 `profile_id` 记录检测结果，避免不同 Profile 的 Doke 路径状态互相覆盖
 - 功能：基础信息页“内核状态”旁已新增“刷新 / 检测”按钮，可手动刷新全局内核状态或检测当前 Profile 的内核配置；Doke 路径支持通过“选择”按钮从本地文件选择器写入
 - 工具：`tools/ipc_cli.py` 已支持命令行 `engine-list` / `probe-engine` / `start-doke`，便于真实二进制接入时不打开 UI 也能验证路径和启动链路
+- 工具：`tools/doke_probe_check.py` 已支持直接校验真实 Doke Chromium 二进制的 `--doke-probe` JSON、能力清单和 `--version` fallback
 - 框架：Agent 已新增 `BrowserEngine` / `BrowserEngineFactory` / `SystemChromeEngine` / `DokeChromiumEngine` 骨架；`profile.start` 已通过 Factory 选择引擎可执行文件
 - 框架：Chrome 启动参数组装已从 `IpcServer` 迁入 `SystemChromeEngine::buildArguments`
 - 框架：代理认证/指纹注入临时扩展生成已从 `IpcServer` 迁入 `SystemChromeEngine::createProfileExtension`
@@ -248,6 +249,7 @@ cmake --build build -j 8
 - 框架：`IpcServer` 已瘦身为 IPC 路由层，当前主要负责 hello、engine.list、消息分发和统一回包
 - 文档：新增 [docs/CHROMIUM_PATCH_PLAN.md](file:///Users/mac/Documents/浏览器/docs/CHROMIUM_PATCH_PLAN.md) 与 [docs/DETECTION_BASELINE.md](file:///Users/mac/Documents/浏览器/docs/DETECTION_BASELINE.md)
 - 文档：新增 [docs/CHROMIUM_SOURCE.md](file:///Users/mac/Documents/浏览器/docs/CHROMIUM_SOURCE.md)，定义本地源码、补丁队列、构建和二进制交接流程
+- 文档：新增 [docs/DOKE_PROBE.md](file:///Users/mac/Documents/浏览器/docs/DOKE_PROBE.md)，定义真实 Doke Chromium 二进制必须实现的最小 `--doke-probe` 握手契约
 - 自动化：新增 `dokebrowser_engine_config`，可不依赖真实 Doke Chromium 二进制验证配置解析、路径优先级、无效显式路径拒绝、`--version` 探针、native feature 开关和 extra args 顺序
 - 自动化：新增 `dokebrowser_profile_launch_config`，可不依赖 IPC/真实浏览器验证启动配置解析与代理参数生成
 - 自动化：新增 `dokebrowser_profile_runtime_manager`，可不启动真实浏览器验证运行态早期错误路径和状态/日志回调

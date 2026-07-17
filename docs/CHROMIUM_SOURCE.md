@@ -82,6 +82,14 @@ Successful probes first run `doke_chromium --doke-probe` with a short timeout. A
 
 The IPC response maps native JSON `capabilities` to `native_capabilities`. It also returns Profile-declared `capabilities` derived from `engine_config_json.features`. If `--doke-probe` fails, the agent returns `native_probe_error` and falls back to `--version`, returning `version` or `version_error`.
 
+The full probe contract is documented in [DOKE_PROBE.md](DOKE_PROBE.md).
+
+Validate a binary directly:
+
+```bash
+python3 tools/doke_probe_check.py /absolute/path/to/doke_chromium
+```
+
 Command-line probe:
 
 ```bash

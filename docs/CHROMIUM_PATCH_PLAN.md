@@ -5,6 +5,7 @@ This document defines the first native patch targets for the self-developed `dok
 ## Runtime Contract
 
 DokeBrowser passes engine-specific configuration through `engine_config_json`.
+The native binary must expose the `--doke-probe` contract documented in [DOKE_PROBE.md](DOKE_PROBE.md) before a feature is promoted to native.
 
 Supported now:
 
@@ -70,6 +71,7 @@ Supported now:
 A feature can be flipped to native in `engine_config_json.features` only when:
 
 - The corresponding native patch is implemented.
+- The binary reports the matching capability through `--doke-probe`.
 - A detection row exists in `docs/DETECTION_BASELINE.md`.
 - The native path is equal or better than extension/CDP fallback.
 - The same Profile remains stable across browser restarts.
