@@ -41,6 +41,34 @@ WaitResult waitForType(FramedJsonSocket* framed, const QString& type, int timeou
   return out;
 }
 
+WaitResult waitForProfileStatus(FramedJsonSocket* framed, const QString& profileId, const QStringList& statuses, int timeoutMs) {
+  WaitResult out;
+  QEventLoop loop;
+  QTimer timer;
+  timer.setSingleShot(true);
+  QObject::connect(&timer, &QTimer::timeout, &loop, [&]() { loop.quit(); });
+
+  QMetaObject::Connection c = QObject::connect(framed, &FramedJsonSocket::jsonReceived, &loop, [&](const QJsonObject& obj) {
+    if (obj.value(QStringLiteral("type")).toString() != QStringLiteral("profile.status")) {
+      return;
+    }
+    if (obj.value(QStringLiteral("profile_id")).toString() != profileId) {
+      return;
+    }
+    if (!statuses.contains(obj.value(QStringLiteral("status")).toString())) {
+      return;
+    }
+    out.ok = true;
+    out.obj = obj;
+    loop.quit();
+  });
+
+  timer.start(timeoutMs);
+  loop.exec();
+  QObject::disconnect(c);
+  return out;
+}
+
 QString agentPathFromTestExe() {
   const QDir d(QCoreApplication::applicationDirPath());
 #if defined(Q_OS_WIN)
@@ -66,7 +94,7 @@ QString writeFakeDokeExecutable(QTemporaryDir& tempDir) {
   if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
     return {};
   }
-  file.write("@echo off\r\nexit /b 0\r\n");
+  file.write("@echo off\r\ntimeout /t 30 /nobreak >nul\r\nexit /b 0\r\n");
   file.close();
   return path;
 #else
@@ -75,7 +103,7 @@ QString writeFakeDokeExecutable(QTemporaryDir& tempDir) {
   if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
     return {};
   }
-  file.write("#!/bin/sh\nexit 0\n");
+  file.write("#!/bin/sh\nsleep 30\nexit 0\n");
   file.close();
   QFile::setPermissions(path,
                         QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner | QFile::ReadGroup | QFile::ExeGroup);
@@ -197,6 +225,41 @@ int main(int argc, char* argv[]) {
     agent.waitForFinished(2000);
     qCritical("engine_probe_expected_available");
     return 10;
+  }
+
+  const QString fakeDokeProfileId = QStringLiteral("smoke-doke-start");
+  QJsonObject dokeStart;
+  dokeStart.insert(QStringLiteral("type"), QStringLiteral("profile.start"));
+  dokeStart.insert(QStringLiteral("profile_id"), fakeDokeProfileId);
+  dokeStart.insert(QStringLiteral("profile_name"), QStringLiteral("Smoke Doke"));
+  dokeStart.insert(QStringLiteral("data_dir"), QDir(fakeDokeDir.path()).filePath(QStringLiteral("profile-data")));
+  dokeStart.insert(QStringLiteral("browser_engine"), QStringLiteral("doke_chromium"));
+  dokeStart.insert(QStringLiteral("engine_config_json"),
+                   QString::fromUtf8(QJsonDocument(availableDokeConfig).toJson(QJsonDocument::Compact)));
+  dokeStart.insert(QStringLiteral("url"), QStringLiteral("about:blank"));
+  framed.send(dokeStart);
+
+  const auto dokeRunning =
+      waitForProfileStatus(&framed, fakeDokeProfileId, QStringList{QStringLiteral("running")}, 5000);
+  if (!dokeRunning.ok) {
+    agent.kill();
+    agent.waitForFinished(2000);
+    qCritical("doke_profile_start_running_timeout");
+    return 14;
+  }
+
+  QJsonObject dokeStop;
+  dokeStop.insert(QStringLiteral("type"), QStringLiteral("profile.stop"));
+  dokeStop.insert(QStringLiteral("profile_id"), fakeDokeProfileId);
+  framed.send(dokeStop);
+
+  const auto dokeStopping = waitForProfileStatus(
+      &framed, fakeDokeProfileId, QStringList{QStringLiteral("stopping"), QStringLiteral("stopped")}, 3000);
+  if (!dokeStopping.ok) {
+    agent.kill();
+    agent.waitForFinished(2000);
+    qCritical("doke_profile_stop_timeout");
+    return 15;
   }
 
   QJsonObject dokeConfig;

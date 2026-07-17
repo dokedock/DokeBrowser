@@ -264,7 +264,7 @@ SQLite 迁移要保持向后兼容。旧 Profile 默认：
 - 已新增 `dokebrowser_profile_runtime_manager` 自动化测试，覆盖运行态早期错误路径和状态/日志回调
 - 已新增 `dokebrowser_proxy_test_runner` 自动化测试，覆盖代理测试请求解析、错误校验和 fallback URL 规则
 - 已新增 `dokebrowser_openvpn_manager` 自动化测试，覆盖 OpenVPN 请求解析、错误校验和参数组装
-- Smoke Test 已覆盖 `engine.probe` 对假 Doke Chromium 可执行文件的可用/不可用探测
+- Smoke Test 已覆盖 `engine.probe` 对假 Doke Chromium 可执行文件的可用/不可用探测，以及 `profile.start/profile.stop` 的假 Doke 启停链路
 - 保持现有 smoke test 通过
 
 ### M4: Doke Chromium 进程启动

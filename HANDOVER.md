@@ -251,7 +251,7 @@ cmake --build build -j 8
 - 自动化：新增 `dokebrowser_profile_runtime_manager`，可不启动真实浏览器验证运行态早期错误路径和状态/日志回调
 - 自动化：新增 `dokebrowser_proxy_test_runner`，可不依赖外网验证代理测试请求解析、校验和 fallback URL 规则
 - 自动化：新增 `dokebrowser_openvpn_manager`，可不启动真实 OpenVPN 验证请求解析、校验和参数组装
-- 自动化：Smoke Test 可用于回归关键链路（弱依赖外网可用性），并已覆盖假 Doke Chromium 可执行文件的 `engine.probe` 可用/不可用探测
+- 自动化：Smoke Test 可用于回归关键链路（弱依赖外网可用性），并已覆盖假 Doke Chromium 可执行文件的 `engine.probe` 可用/不可用探测和 `profile.start/profile.stop` 启停链路
 
 ## 参考项目（指纹对抗与架构借鉴）
 - XChrome / zchrome（WPF 控制台 + CDP 注入思路）
