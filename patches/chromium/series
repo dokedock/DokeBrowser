@@ -1,4 +1,16 @@
-# Add Chromium patch filenames here in apply order.
-# Example:
-# 0001-fingerprint-ua-client-hints.patch
-
+0001-doke-probe-contract.patch
+0002-doke-runtime-config-load.patch
+0003-doke-runtime-ua-lang-switches.patch
+0004-doke-runtime-ua-client-hints-ingress.patch
+0005-doke-runtime-ua-client-hints-override.patch
+0006-doke-runtime-webrtc-policy.patch
+0007-doke-runtime-screen-device-switches.patch
+0008-doke-runtime-hardware-switches.patch
+0009-doke-blink-hardware-overrides.patch
+0010-doke-runtime-rendering-noise-ingress.patch
+0011-doke-runtime-surface-preset-ingress.patch
+0012-doke-runtime-alignment-ingress.patch
+0013-doke-runtime-automation-ingress.patch
+0014-doke-blink-webdriver-policy.patch
+0015-doke-automation-controlled-policy.patch
+0016-doke-cdp-side-effect-preview-guard.patch

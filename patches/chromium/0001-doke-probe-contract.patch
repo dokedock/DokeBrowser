@@ -1,0 +1,51 @@
+Doke-Purpose: Add the minimum --doke-probe native handshake for DokeBrowser engine detection.
+Doke-Subsystem: chrome/app startup command-line handling.
+Doke-Detection-Target: DokeBrowser engine.probe and tools/doke_probe_check.py.
+Doke-Rollback: Remove this patch from patches/chromium/series and rebuild Chromium; DokeBrowser will fall back to --version probing.
+
+diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
+--- a/chrome/app/chrome_main.cc
++++ b/chrome/app/chrome_main.cc
+@@ -5,6 +5,7 @@
+ #include "chrome/app/chrome_main.h"
+ 
+ #include <stdint.h>
++#include <cstdio>
+ 
+ #include <iostream>
+ #include <memory>
+@@ -58,6 +59,21 @@ std::optional<base::CommandLine>& GetInitialCommandLineStorage() {
+   return *initial_command_line;
+ }
+ 
++constexpr char kDokeProbeSwitch[] = "doke-probe";
++
++int MaybeRunDokeProbe(const base::CommandLine& command_line) {
++  if (!command_line.HasSwitch(kDokeProbeSwitch)) {
++    return -1;
++  }
++
++  std::fputs(
++      "{\"probe_protocol\":1,\"version\":\"Doke Chromium "
++      "0.1.0\",\"capabilities\":[]}\n",
++      stdout);
++  std::fflush(stdout);
++  return 0;
++}
++
+ }  // namespace
+ 
+ const base::CommandLine& GetInitialBrowserCommandLine() {
+@@ -145,7 +160,12 @@ int ChromeMain(int argc, const char** argv) {
+   base::CommandLine::Init(0, nullptr);
+ 
+   base::CommandLine* command_line(base::CommandLine::ForCurrentProcess());
+ 
++  const int doke_probe_result = MaybeRunDokeProbe(*command_line);
++  if (doke_probe_result >= 0) {
++    return doke_probe_result;
++  }
++
+   // Capture the unpolluted command line snapshot in the browser process.
+   // This must happen immediately after CommandLine::Init to ensure we capture
+   // the state before any internal programmatic mutations.

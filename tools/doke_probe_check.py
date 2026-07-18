@@ -57,7 +57,7 @@ def extract_json_object(text):
     return stripped[start : end + 1]
 
 
-def validate_probe(obj):
+def validate_probe(obj, required_capabilities):
     errors = []
     protocol = obj.get("probe_protocol")
     if protocol != 1 and protocol != "1":
@@ -79,6 +79,14 @@ def validate_probe(obj):
         if capability.strip() not in ALLOWED_CAPABILITIES:
             errors.append(f"unknown capability: {capability}")
 
+    normalized_capabilities = {capability.strip() for capability in capabilities if isinstance(capability, str)}
+    for capability in required_capabilities:
+        if capability not in ALLOWED_CAPABILITIES:
+            errors.append(f"unknown required capability: {capability}")
+            continue
+        if capability not in normalized_capabilities:
+            errors.append(f"missing required capability: {capability}")
+
     return errors
 
 
@@ -94,6 +102,13 @@ def main():
     parser = argparse.ArgumentParser(description="Validate a Doke Chromium --doke-probe implementation.")
     parser.add_argument("executable", help="Path to doke_chromium")
     parser.add_argument("--timeout", type=float, default=2.0, help="Probe timeout in seconds")
+    parser.add_argument(
+        "--require-capability",
+        action="append",
+        default=[],
+        choices=sorted(ALLOWED_CAPABILITIES),
+        help="Require a native capability reported by --doke-probe. Can be passed more than once.",
+    )
     parser.add_argument("--json", action="store_true", help="Print machine-readable result")
     args = parser.parse_args()
 
@@ -101,6 +116,7 @@ def main():
         "ok": False,
         "executable": args.executable,
         "errors": [],
+        "required_capabilities": args.require_capability,
         "probe": {},
         "version_line": "",
     }
@@ -126,7 +142,7 @@ def main():
             except json.JSONDecodeError as exc:
                 result["errors"].append(f"probe_json_invalid:{exc.msg}")
             else:
-                result["errors"].extend(validate_probe(result["probe"]))
+                result["errors"].extend(validate_probe(result["probe"], args.require_capability))
 
         version_run = run_command(args.executable, ["--version"], args.timeout)
         if version_run["ok"]:

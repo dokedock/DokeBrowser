@@ -1,0 +1,62 @@
+Doke-Purpose: Ingest Doke runtime automation and CDP exposure policy.
+Doke-Subsystem: chrome/app startup command-line handling.
+Doke-Detection-Target: CreepJS, bot.incolumitas, and navigator.webdriver/CDP side-effect checks.
+Doke-Rollback: Remove this patch from patches/chromium/series and rebuild Chromium; DokeBrowser will keep writing automation policy but Chromium will ignore it.
+
+diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
+--- a/chrome/app/chrome_main.cc
++++ b/chrome/app/chrome_main.cc
+@@ -60,6 +60,11 @@ constexpr char kDokeGeoAccuracySwitch[] = "doke-geo-accuracy";
+ constexpr char kDokeProxySchemeSwitch[] = "doke-proxy-scheme";
+ constexpr char kDokeProxyHostSwitch[] = "doke-proxy-host";
+ constexpr char kDokeProxyPortSwitch[] = "doke-proxy-port";
++constexpr char kDokeWebdriverPolicySwitch[] = "doke-webdriver-policy";
++constexpr char kDokeDevtoolsExposureSwitch[] = "doke-devtools-exposure";
++constexpr char kDokeCdpSideEffectGuardSwitch[] = "doke-cdp-side-effect-guard";
++constexpr char kDokeDebugPortRequiredSwitch[] = "doke-debug-port-required";
++constexpr char kDokeStartupAutomationControlledSwitch[] = "doke-startup-automation-controlled";
+ 
+ void AppendStringSwitchIfAbsent(base::CommandLine& command_line,
+                                 const char* switch_name,
+@@ -138,6 +143,29 @@ void AppendAlignmentSwitchesIfAbsent(base::CommandLine& command_line,
+   }
+ }
+ 
++void AppendBoolSwitchIfAbsent(base::CommandLine& command_line,
++                              const char* switch_name,
++                              const base::Value::Dict& dict,
++                              const char* key) {
++  if (command_line.HasSwitch(switch_name)) {
++    return;
++  }
++  std::optional<bool> value = dict.FindBool(key);
++  if (!value.has_value()) {
++    return;
++  }
++  command_line.AppendSwitchASCII(switch_name, value.value() ? "true" : "false");
++}
++
++void AppendAutomationSwitchesIfAbsent(base::CommandLine& command_line,
++                                      const base::Value::Dict& automation) {
++  AppendStringSwitchIfAbsent(command_line, kDokeWebdriverPolicySwitch, automation, "webdriver_policy");
++  AppendStringSwitchIfAbsent(command_line, kDokeDevtoolsExposureSwitch, automation, "devtools_exposure");
++  AppendBoolSwitchIfAbsent(command_line, kDokeCdpSideEffectGuardSwitch, automation, "cdp_side_effect_guard");
++  AppendBoolSwitchIfAbsent(command_line, kDokeDebugPortRequiredSwitch, automation, "debug_port_required");
++  AppendBoolSwitchIfAbsent(command_line, kDokeStartupAutomationControlledSwitch, automation, "startup_automation_controlled");
++}
++
+ void MaybeLogDokeUaClientHints(const base::Value::Dict& fingerprint) {
+   const base::Value::Dict* hints = fingerprint.FindDict(kDokeUaClientHintsKey);
+   if (!hints) {
+@@ -250,6 +278,11 @@ void MaybeLoadDokeRuntimeConfig(base::CommandLine& command_line) {
+     AppendAlignmentSwitchesIfAbsent(command_line, *alignment);
+   }
+ 
++  const base::Value::Dict* automation = root.FindDict("automation");
++  if (automation) {
++    AppendAutomationSwitchesIfAbsent(command_line, *automation);
++  }
++
+   const base::Value::Dict* webrtc = root.FindDict("webrtc");
+   if (webrtc) {
+     AppendStringSwitchIfAbsent(command_line, kDokeWebRtcIpHandlingPolicySwitch, *webrtc, "ip_handling_policy");

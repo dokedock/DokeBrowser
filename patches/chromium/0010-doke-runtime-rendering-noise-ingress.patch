@@ -1,0 +1,54 @@
+Doke-Purpose: Ingest Doke runtime rendering noise seeds for Canvas, WebGL, and Audio surfaces.
+Doke-Subsystem: chrome/app startup command-line handling.
+Doke-Detection-Target: CreepJS and FingerprintJS Canvas/WebGL/Audio consistency checks.
+Doke-Rollback: Remove this patch from patches/chromium/series and rebuild Chromium; DokeBrowser will keep writing rendering seeds but Chromium will ignore them.
+
+diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
+--- a/chrome/app/chrome_main.cc
++++ b/chrome/app/chrome_main.cc
+@@ -43,6 +43,9 @@ constexpr char kDokeDeviceScaleFactorSwitch[] = "force-device-scale-factor";
+ constexpr char kDokeTouchEventsSwitch[] = "touch-events";
+ constexpr char kDokeHardwareConcurrencySwitch[] = "doke-hardware-concurrency";
+ constexpr char kDokeDeviceMemoryGbSwitch[] = "doke-device-memory-gb";
++constexpr char kDokeCanvasNoiseSeedSwitch[] = "doke-canvas-noise-seed";
++constexpr char kDokeWebglNoiseSeedSwitch[] = "doke-webgl-noise-seed";
++constexpr char kDokeAudioNoiseSeedSwitch[] = "doke-audio-noise-seed";
+ 
+ void AppendStringSwitchIfAbsent(base::CommandLine& command_line,
+                                 const char* switch_name,
+@@ -60,6 +63,21 @@ void AppendStringSwitchIfAbsent(base::CommandLine& command_line,
+   command_line.AppendSwitchASCII(switch_name, *value);
+ }
+ 
++void AppendRenderingNoiseSwitchIfAbsent(base::CommandLine& command_line,
++                                        const base::Value::Dict& rendering,
++                                        const char* section_name,
++                                        const char* switch_name) {
++  const base::Value::Dict* section = rendering.FindDict(section_name);
++  if (!section) {
++    return;
++  }
++  const std::string* strategy = section->FindString("strategy");
++  if (!strategy || *strategy != "stable_noise") {
++    return;
++  }
++  AppendStringSwitchIfAbsent(command_line, switch_name, *section, "seed");
++}
++
+ void MaybeLogDokeUaClientHints(const base::Value::Dict& fingerprint) {
+   const base::Value::Dict* hints = fingerprint.FindDict(kDokeUaClientHintsKey);
+   if (!hints) {
+@@ -150,6 +168,13 @@ void MaybeLoadDokeRuntimeConfig(base::CommandLine& command_line) {
+     MaybeLogDokeUaClientHints(*fingerprint);
+   }
+ 
++  const base::Value::Dict* rendering = root.FindDict("rendering");
++  if (rendering) {
++    AppendRenderingNoiseSwitchIfAbsent(command_line, *rendering, "canvas", kDokeCanvasNoiseSeedSwitch);
++    AppendRenderingNoiseSwitchIfAbsent(command_line, *rendering, "webgl", kDokeWebglNoiseSeedSwitch);
++    AppendRenderingNoiseSwitchIfAbsent(command_line, *rendering, "audio", kDokeAudioNoiseSeedSwitch);
++  }
++
+   const base::Value::Dict* webrtc = root.FindDict("webrtc");
+   if (webrtc) {
+     AppendStringSwitchIfAbsent(command_line, kDokeWebRtcIpHandlingPolicySwitch, *webrtc, "ip_handling_policy");

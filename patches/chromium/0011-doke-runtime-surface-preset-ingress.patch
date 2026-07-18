@@ -1,0 +1,71 @@
+Doke-Purpose: Ingest Doke runtime plugins, MIME types, fonts, and client rects surface presets.
+Doke-Subsystem: chrome/app startup command-line handling.
+Doke-Detection-Target: CreepJS plugins, MIME types, fonts, and client rects consistency checks.
+Doke-Rollback: Remove this patch from patches/chromium/series and rebuild Chromium; DokeBrowser will keep writing surface presets but Chromium will ignore them.
+
+diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
+--- a/chrome/app/chrome_main.cc
++++ b/chrome/app/chrome_main.cc
+@@ -46,6 +46,12 @@ constexpr char kDokeDeviceMemoryGbSwitch[] = "doke-device-memory-gb";
+ constexpr char kDokeCanvasNoiseSeedSwitch[] = "doke-canvas-noise-seed";
+ constexpr char kDokeWebglNoiseSeedSwitch[] = "doke-webgl-noise-seed";
+ constexpr char kDokeAudioNoiseSeedSwitch[] = "doke-audio-noise-seed";
++constexpr char kDokePluginsPresetSwitch[] = "doke-plugins-preset";
++constexpr char kDokeMimeTypesPresetSwitch[] = "doke-mime-types-preset";
++constexpr char kDokeFontsPresetSwitch[] = "doke-fonts-preset";
++constexpr char kDokeFontsSeedSwitch[] = "doke-fonts-seed";
++constexpr char kDokeClientRectsPresetSwitch[] = "doke-client-rects-preset";
++constexpr char kDokeClientRectsSeedSwitch[] = "doke-client-rects-seed";
+ 
+ void AppendStringSwitchIfAbsent(base::CommandLine& command_line,
+                                 const char* switch_name,
+@@ -78,6 +84,32 @@ void AppendRenderingNoiseSwitchIfAbsent(base::CommandLine& command_line,
+   AppendStringSwitchIfAbsent(command_line, switch_name, *section, "seed");
+ }
+ 
++void AppendPlatformPresetSwitchIfAbsent(base::CommandLine& command_line,
++                                        const base::Value::Dict& surfaces,
++                                        const char* section_name,
++                                        const char* switch_name) {
++  const base::Value::Dict* section = surfaces.FindDict(section_name);
++  if (!section) {
++    return;
++  }
++  const std::string* strategy = section->FindString("strategy");
++  if (!strategy || *strategy != "platform_preset") {
++    return;
++  }
++  AppendStringSwitchIfAbsent(command_line, switch_name, *section, "preset");
++}
++
++void AppendSurfaceSeedSwitchIfAbsent(base::CommandLine& command_line,
++                                     const base::Value::Dict& surfaces,
++                                     const char* section_name,
++                                     const char* switch_name) {
++  const base::Value::Dict* section = surfaces.FindDict(section_name);
++  if (!section) {
++    return;
++  }
++  AppendStringSwitchIfAbsent(command_line, switch_name, *section, "seed");
++}
++
+ void MaybeLogDokeUaClientHints(const base::Value::Dict& fingerprint) {
+   const base::Value::Dict* hints = fingerprint.FindDict(kDokeUaClientHintsKey);
+   if (!hints) {
+@@ -175,6 +207,16 @@ void MaybeLoadDokeRuntimeConfig(base::CommandLine& command_line) {
+     AppendRenderingNoiseSwitchIfAbsent(command_line, *rendering, "audio", kDokeAudioNoiseSeedSwitch);
+   }
+ 
++  const base::Value::Dict* surfaces = root.FindDict("surfaces");
++  if (surfaces) {
++    AppendPlatformPresetSwitchIfAbsent(command_line, *surfaces, "plugins", kDokePluginsPresetSwitch);
++    AppendPlatformPresetSwitchIfAbsent(command_line, *surfaces, "mime_types", kDokeMimeTypesPresetSwitch);
++    AppendPlatformPresetSwitchIfAbsent(command_line, *surfaces, "fonts", kDokeFontsPresetSwitch);
++    AppendSurfaceSeedSwitchIfAbsent(command_line, *surfaces, "fonts", kDokeFontsSeedSwitch);
++    AppendPlatformPresetSwitchIfAbsent(command_line, *surfaces, "client_rects", kDokeClientRectsPresetSwitch);
++    AppendSurfaceSeedSwitchIfAbsent(command_line, *surfaces, "client_rects", kDokeClientRectsSeedSwitch);
++  }
++
+   const base::Value::Dict* webrtc = root.FindDict("webrtc");
+   if (webrtc) {
+     AppendStringSwitchIfAbsent(command_line, kDokeWebRtcIpHandlingPolicySwitch, *webrtc, "ip_handling_policy");

@@ -1,0 +1,55 @@
+Doke-Purpose: Ingest UA-CH metadata from Doke runtime config for later native client hints overrides.
+Doke-Subsystem: chrome/app startup command-line handling.
+Doke-Detection-Target: deviceandbrowserinfo and BrowserScan UA-CH consistency checks.
+Doke-Rollback: Remove this patch from patches/chromium/series and rebuild Chromium; DokeBrowser will continue using existing Agent/CDP fallback paths.
+
+diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
+--- a/chrome/app/chrome_main.cc
++++ b/chrome/app/chrome_main.cc
+@@ -55,6 +55,7 @@ std::optional<base::CommandLine>& GetInitialCommandLineStorage() {
+   return *initial_command_line;
+ }
+ 
++constexpr char kDokeUaClientHintsKey[] = "ua_client_hints";
+ constexpr char kDokeProbeSwitch[] = "doke-probe";
+ constexpr char kDokeRuntimeConfigSwitch[] = "doke-runtime-config";
+ constexpr char kDokeRuntimeSchema[] = "doke_profile_runtime.v1";
+@@ -84,6 +85,30 @@ void AppendStringSwitchIfAbsent(base::CommandLine& command_line,
+   command_line.AppendSwitchASCII(switch_name, *value);
+ }
+ 
++void MaybeLogDokeUaClientHints(const base::Value::Dict& fingerprint) {
++  const base::Value::Dict* hints = fingerprint.FindDict(kDokeUaClientHintsKey);
++  if (!hints) {
++    return;
++  }
++
++  const base::Value::List* brands = hints->FindList("brands");
++  const base::Value::List* full_version_list =
++      hints->FindList("fullVersionList");
++  const std::string* platform = hints->FindString("platform");
++  const std::string* full_version = hints->FindString("fullVersion");
++
++  if (!brands || !full_version_list || !platform || !full_version) {
++    std::fputs("Doke UA-CH metadata is incomplete\n", stderr);
++    return;
++  }
++
++  std::fprintf(stderr,
++               "Doke UA-CH metadata loaded platform=%s fullVersion=%s "
++               "brands=%zu fullVersionList=%zu\n",
++               platform->c_str(), full_version->c_str(), brands->size(),
++               full_version_list->size());
++}
++
+ int MaybeRunDokeProbe(const base::CommandLine& command_line) {
+   if (!command_line.HasSwitch(kDokeProbeSwitch)) {
+     return -1;
+@@ -147,6 +175,7 @@ void MaybeLoadDokeRuntimeConfig(base::CommandLine& command_line) {
+   if (fingerprint) {
+     AppendStringSwitchIfAbsent(command_line, kDokeUserAgentSwitch, *fingerprint, "user_agent");
+     AppendStringSwitchIfAbsent(command_line, kDokeLanguageSwitch, *fingerprint, "language");
++    MaybeLogDokeUaClientHints(*fingerprint);
+   }
+ 
+   std::fprintf(stderr, "Doke runtime config loaded for profile %s\n",

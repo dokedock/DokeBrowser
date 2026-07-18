@@ -135,6 +135,7 @@ public:
 - `patches/chromium/series`: 自研补丁应用顺序。
 - `tools/apply_chromium_patches.sh`: 对本地 Chromium checkout 应用补丁。
 - `tools/build_doke_chromium.sh`: 从本地 Chromium checkout 构建目标。
+- `tools/select_chromium_xcode.sh`: macOS 本地完整 Xcode 选择与校验工具；完整 Xcode 是当前优先构建路线。
 - `third_party/README.md`: 本地源码工作区说明；完整 Chromium checkout 不提交到仓库。
 
 ### `cef`
@@ -186,9 +187,20 @@ SQLite 迁移要保持向后兼容。旧 Profile 默认：
 - `extra_args`: Doke Chromium 专属启动参数，会插入到最终 URL 之前。
 - `features`: 声明后续哪些能力由自研 Chromium 原生补丁承载。当前已接入 `native_fingerprint` 和 `native_geoip` 的 fallback 分流；`native_proxy` 和 `native_humanize` 仍为预留。
 - UI 已提供“刷新 / 检测”入口；检测会通过 `engine.probe` 按当前 Profile 的 `engine_config_json` 验证 Doke Chromium 路径，并拒绝普通文件或无执行权限文件。Doke 路径支持从本地文件选择器写入。
-- `engine.probe` 对可用的 `doke_chromium` 会先短超时执行 `--doke-probe`，期望二进制返回 JSON：`{"probe_protocol":1,"version":"...","capabilities":["native_fingerprint"]}`。成功时回包带 `version`、`probe_protocol`、`native_capabilities`；失败时带 `native_probe_error` 并 fallback 到 `--version`，回包带 `version` 或 `version_error`。`capabilities` 仍表示当前 Profile 在 `features` 中启用/声明的能力。
+- `engine.probe` 对可用的 `doke_chromium` 会先短超时执行 `--doke-probe`，期望二进制返回 JSON：`{"probe_protocol":1,"version":"...","capabilities":["native_fingerprint"]}`。成功时回包带 `version`、`probe_protocol`、`native_capabilities`；失败时带 `native_probe_error` 并 fallback 到 `--version`，回包带 `version` 或 `version_error`。`capabilities` 表示当前 Profile 在 `features` 中启用/声明的能力；`missing_native_capabilities` 表示 Profile 已声明但二进制未自报支持的能力。
+- `profile.start` 也会读取 `--doke-probe`。只有 Profile 声明能力且二进制自报支持时，Agent 才关闭对应 fallback；缺失或无法验证时继续使用 Agent fallback，并写入运行日志。
+- Doke 启动时 Agent 会写入 `Doke/runtime.json`，通过 `--doke-runtime-config=...` 传给内核。该文件使用 `doke_profile_runtime.v1` schema，包含指纹、UA-CH、WebRTC、screen/device helper、hardware、rendering、surfaces、Geo、alignment、automation、native 能力、fallback 决策和非敏感代理元数据。
+- 当 UA 可解析时，`Doke/runtime.json` 的 `fingerprint.ua_client_hints` 会携带 brands、fullVersionList、platform、platformVersion、architecture、bitness、mobile 等结构化 UA-CH 元数据，供后续 Chromium patch 接入网络/JS UA-CH surface。
+- Chromium patch queue 已包含 UA-CH override 初版：`0005-doke-runtime-ua-client-hints-override.patch` 会用 `fingerprint.ua_client_hints` 覆盖 `GetUserAgentMetadata()`；真实 Chromium 编译和检测基准通过前仍不应声明 `native_fingerprint`。
+- `Doke/runtime.json` 已包含 `webrtc.ip_handling_policy=disable_non_proxied_udp`；`0006-doke-runtime-webrtc-policy.patch` 会在 Chromium 侧补充对应命令行策略，真实 ICE candidate 检测通过前不声明完整 WebRTC native 能力。
+- `Doke/runtime.json` 已包含 `fingerprint.window_size`、`fingerprint.device_scale_factor_arg`、`fingerprint.touch_events`；`0007-doke-runtime-screen-device-switches.patch` 会在 Chromium 侧补充窗口、DPR 和 touch 启动开关。
+- `Doke/runtime.json` 已包含 `fingerprint.hardware_concurrency_arg`、`fingerprint.device_memory_gb_arg`；`0008-doke-runtime-hardware-switches.patch` 会转成 Doke 专用启动开关，`0009-doke-blink-hardware-overrides.patch` 会覆盖 Blink 的 `navigator.hardwareConcurrency` / `navigator.deviceMemory` 路径。真实 Chromium 编译和检测基准通过前仍不声明 `native_fingerprint`。
+- `Doke/runtime.json` 已包含 `rendering.canvas`、`rendering.webgl`、`rendering.audio` 稳定噪声 seed；`0010-doke-runtime-rendering-noise-ingress.patch` 会转成 Doke 专用启动开关，后续 Canvas/WebGL/Audio patch 继续读取同一契约。真实 Chromium 编译和 CreepJS/FingerprintJS 基线通过前仍不声明 `native_fingerprint`。
+- `Doke/runtime.json` 已包含 `surfaces.plugins`、`surfaces.mime_types`、`surfaces.fonts`、`surfaces.client_rects` 平台 preset 和稳定 seed；`0011-doke-runtime-surface-preset-ingress.patch` 会转成 Doke 专用启动开关，后续 plugin/MIME/font/client-rect patch 继续读取同一契约。真实 Chromium 编译和 CreepJS 基线通过前仍不声明 `native_fingerprint`。
+- `Doke/runtime.json` 已包含 `alignment.language`、`alignment.timezone`、`alignment.geo`、`alignment.proxy` 对齐元数据；`0012-doke-runtime-alignment-ingress.patch` 会转成 Doke 专用启动开关，后续 timezone/language/geolocation/proxy patch 继续读取同一契约。真实 Chromium 编译和 BrowserScan/location 基线通过前仍不声明 `native_geoip` 或 `native_proxy`。
+- `Doke/runtime.json` 已包含 `automation.webdriver_policy`、`automation.devtools_exposure`、`automation.cdp_side_effect_guard` 等自动化检测元数据；`0013` 会转成 Doke 专用启动开关，`0014`/`0015` 已接入 `navigator.webdriver` 与 `AutomationControlled` suppression，`0016` 已接入 CDP preview side-effect guard。真实 Chromium 编译和 bot.incolumitas/CreepJS/deviceandbrowserinfo 基线通过前仍不声明 `native_fingerprint`。
 - Doke 路径相关错误码：`doke_chromium_not_found`、`doke_chromium_path_missing`、`doke_chromium_path_not_file`、`doke_chromium_path_not_executable`。App 会把这些内部码转换为中文状态文案。
-- 真实二进制接入前先通过 `python3 tools/doke_probe_check.py /path/to/doke_chromium` 验证 `--doke-probe` 契约。
+- 真实二进制接入前先通过 `python3 tools/doke_probe_check.py /path/to/doke_chromium` 验证 `--doke-probe` 契约；可用 `--require-capability native_fingerprint` 验收指定 native 能力。
 
 ## IPC 规划
 
@@ -309,9 +321,13 @@ SQLite 迁移要保持向后兼容。旧 Profile 默认：
 
 ## 当前开发优先级
 
-1. 文档目标更新。
-2. Profile 数据模型增加 `browser_engine`、`engine_config_json`、`fingerprint_seed`。
-3. UI 加内核选择，默认 `system_chrome`，目标 `doke_chromium`。
-4. 定义 Doke Chromium 自研二进制参数规范。
-5. `DokeChromiumEngine` 启动本地自研 Chromium 二进制并接入参数规范。
-6. 建立 Chromium 源码补丁文档与检测基准。
+1. 已完成：文档目标更新。
+2. 已完成：Profile 数据模型增加 `browser_engine`、`engine_config_json`、`fingerprint_seed`。
+3. 已完成：UI 加内核选择，`system_chrome` 仅保留为开发 fallback，目标 `doke_chromium`。
+4. 已完成：定义 Doke Chromium 自研二进制参数、`--doke-probe` 和 `--doke-runtime-config` 规范。
+5. 已完成：`DokeChromiumEngine` 启动本地自研 Chromium 二进制并接入参数规范。
+6. 已完成：建立 Chromium 源码补丁文档、patch queue 校验、源码 checkout 绑定/校验与构建入口。
+7. 已完成：真实 Chromium checkout / depot_tools 链路已建立，`third_party/chromium/src` 当前为 ready 状态，HEAD `534c1497c1`，并已成功应用 `0001` 到 `0016` Doke patch queue。
+8. 进行中：真实 Doke Chromium 构建链路。2026-07-18 已选中 Xcode 26.6，`python3 tools/doke_chromium_build_prereq.py` 通过；官方 Metal 构建仍因缺少 Apple MetalToolchain 阻塞，`xcrun metal --version` 报缺失组件，`xcodebuild -downloadComponent MetalToolchain` 暂无法从 Apple catalog 取得匹配包。
+9. 进行中：临时 no-Metal 验证构建。`out/Doke/args.gn` 临时关闭 `angle_enable_metal` / `dawn_enable_metal` 后 `gn gen out/Doke` 通过；已修复 `LASTCHANGE.committime`、`gpu/webgpu/DAWN_VERSION`、DevTools Rollup native 包和 Go cache 路径问题；`bash tools/build_doke_chromium.sh` 已推进到 `12060/45799` 且未出现新的编译错误，但尚未完成最终二进制产物和 `--doke-probe` 启动验证。
+10. 下一步：继续完成 no-Metal 验证构建，若通过则执行 `--doke-probe`、`--version`、Agent `engine.probe` 和最小 `profile.start` 验证；随后记录检测基线。正式 macOS GPU 构建需等 Xcode 26.6 对应 MetalToolchain 可安装，或换用带完整 Metal 组件的 Xcode 包。

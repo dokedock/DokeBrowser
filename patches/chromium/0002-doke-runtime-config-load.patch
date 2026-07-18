@@ -1,0 +1,98 @@
+Doke-Purpose: Load and validate the Doke runtime config passed by DokeBrowser.
+Doke-Subsystem: chrome/app startup command-line handling.
+Doke-Detection-Target: DokeBrowser profile.start, Doke/runtime.json, and tools/doke_runtime_check.py.
+Doke-Rollback: Remove this patch from patches/chromium/series and rebuild Chromium; DokeBrowser will still pass --doke-runtime-config but Chromium will ignore it.
+
+diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
+--- a/chrome/app/chrome_main.cc
++++ b/chrome/app/chrome_main.cc
+@@ -8,7 +8,10 @@
+ #include <iostream>
+ #include <memory>
+ #include <optional>
++#include <string>
+ 
+ #include "base/command_line.h"
+ #include "base/environment.h"
++#include "base/files/file_path.h"
++#include "base/files/file_util.h"
+ #include "base/functional/bind.h"
+@@ -15,2 +18,3 @@
+ #include "base/functional/callback_helpers.h"
++#include "base/json/json_reader.h"
+ #include "base/no_destructor.h"
+@@ -18,3 +22,4 @@
+ #include "base/sampling_heap_profiler/poisson_allocation_sampler.h"
+ #include "base/time/time.h"
++#include "base/values.h"
+ #include "build/build_config.h"
+@@ -104,6 +109,8 @@ std::optional<base::CommandLine>& GetInitialCommandLineStorage() {
+ }
+ 
+ constexpr char kDokeProbeSwitch[] = "doke-probe";
++constexpr char kDokeRuntimeConfigSwitch[] = "doke-runtime-config";
++constexpr char kDokeRuntimeSchema[] = "doke_profile_runtime.v1";
+ 
+ int MaybeRunDokeProbe(const base::CommandLine& command_line) {
+   if (!command_line.HasSwitch(kDokeProbeSwitch)) {
+@@ -122,6 +129,51 @@ int MaybeRunDokeProbe(const base::CommandLine& command_line) {
+   return 0;
+ }
+ 
++void MaybeLoadDokeRuntimeConfig(const base::CommandLine& command_line) {
++  if (!command_line.HasSwitch(kDokeRuntimeConfigSwitch)) {
++    return;
++  }
++
++  const base::FilePath config_path =
++      command_line.GetSwitchValuePath(kDokeRuntimeConfigSwitch);
++  if (config_path.empty()) {
++    std::fputs("Doke runtime config path is empty\n", stderr);
++    return;
++  }
++
++  std::string contents;
++  if (!base::ReadFileToString(config_path, &contents)) {
++    std::fprintf(stderr, "Doke runtime config could not be read: %s\n",
++                 config_path.AsUTF8Unsafe().c_str());
++    return;
++  }
++
++  std::optional<base::Value> parsed = base::JSONReader::Read(contents);
++  if (!parsed || !parsed->is_dict()) {
++    std::fprintf(stderr, "Doke runtime config is not a JSON object: %s\n",
++                 config_path.AsUTF8Unsafe().c_str());
++    return;
++  }
++
++  const base::Value::Dict& root = parsed->GetDict();
++  const std::string* schema = root.FindString("schema");
++  if (!schema || *schema != kDokeRuntimeSchema) {
++    std::fprintf(stderr, "Doke runtime config schema mismatch: %s\n",
++                 config_path.AsUTF8Unsafe().c_str());
++    return;
++  }
++
++  const std::string* profile_id = root.FindString("profile_id");
++  if (!profile_id || profile_id->empty()) {
++    std::fprintf(stderr, "Doke runtime config profile_id is empty: %s\n",
++                 config_path.AsUTF8Unsafe().c_str());
++    return;
++  }
++
++  std::fprintf(stderr, "Doke runtime config loaded for profile %s\n",
++               profile_id->c_str());
++}
++
+ }  // namespace
+ 
+ const base::CommandLine& GetInitialBrowserCommandLine() {
+@@ -216,6 +268,8 @@ int ChromeMain(int argc, const char** argv) {
+     return doke_probe_result;
+   }
+ 
++  MaybeLoadDokeRuntimeConfig(*command_line);
++
+   // Capture the unpolluted command line snapshot in the browser process.
+   // This must happen immediately after CommandLine::Init to ensure we capture
+   // the state before any internal programmatic mutations.

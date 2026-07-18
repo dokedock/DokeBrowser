@@ -1,0 +1,50 @@
+Doke-Purpose: Suppress Blink AutomationControlled runtime feature when Doke webdriver policy is hide.
+Doke-Subsystem: content/child Blink runtime feature initialization.
+Doke-Detection-Target: BrowserScan bot detection, CreepJS, deviceandbrowserinfo, and bot.incolumitas automation checks.
+Doke-Rollback: Remove this patch from patches/chromium/series and rebuild Chromium; DokeBrowser will continue using Agent/CDP fallback for automation masking.
+
+diff --git a/content/child/runtime_features.cc b/content/child/runtime_features.cc
+--- a/content/child/runtime_features.cc
++++ b/content/child/runtime_features.cc
+@@ -389,6 +389,19 @@ struct SwitchToFeatureMap {
+   bool target_enabled_state;
+ };
+ 
++constexpr char kDokeWebdriverPolicySwitch[] = "doke-webdriver-policy";
++
++bool ShouldHideDokeWebdriver(const base::CommandLine& command_line) {
++  const std::string policy =
++      command_line.GetSwitchValueASCII(kDokeWebdriverPolicySwitch);
++  return policy == "hide" || policy == "false" || policy == "0";
++}
++
++void ApplyDokeAutomationControlledPolicy(const base::CommandLine& command_line) {
++  if (ShouldHideDokeWebdriver(command_line))
++    WebRuntimeFeatures::EnableAutomationControlled(false);
++}
++
+ // Sets blink runtime features controlled by command line switches.
+ void SetRuntimeFeaturesFromCommandLine(const base::CommandLine& command_line) {
+   // To add a new switch-controlled runtime feature, add a new
+@@ -440,6 +457,8 @@ void SetRuntimeFeaturesFromCommandLine(const base::CommandLine& command_line) {
+     }
+   }
+ 
++  const bool doke_hide_webdriver = ShouldHideDokeWebdriver(command_line);
++
+   // Set EnableAutomationControlled if the caller passes
+   // --remote-debugging-port=0 on the command line. This means
+   // the caller has requested an ephemeral port which is how ChromeDriver
+@@ -456,8 +475,10 @@ void SetRuntimeFeaturesFromCommandLine(const base::CommandLine& command_line) {
+         command_line.GetSwitchValueASCII(::switches::kRemoteDebuggingPort);
+     int port;
+     if (base::StringToInt(port_str, &port) && port == 0) {
+-      WebRuntimeFeatures::EnableAutomationControlled(true);
++      WebRuntimeFeatures::EnableAutomationControlled(!doke_hide_webdriver);
+     }
+   }
++
++  ApplyDokeAutomationControlledPolicy(command_line);
+ }
+ 
+ // Sets blink runtime features that depend on a combination

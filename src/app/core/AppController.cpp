@@ -143,6 +143,11 @@ QString engineStatusText(const QJsonObject& engine) {
     if (!version.isEmpty()) {
       status += QStringLiteral(" (%1)").arg(version);
     }
+    const QStringList missingNativeCapabilities =
+        jsonArrayToStringList(engine.value(QStringLiteral("missing_native_capabilities")).toArray());
+    if (!missingNativeCapabilities.isEmpty()) {
+      status += QStringLiteral("；缺少原生能力: %1").arg(missingNativeCapabilities.join(QStringLiteral(",")));
+    }
     return status;
   }
   const QString error = engine.value(QStringLiteral("error")).toString(QStringLiteral("not_available"));
@@ -370,13 +375,18 @@ AppController::AppController(QObject* parent) : QObject(parent) {
     }
     const QStringList capabilities = jsonArrayToStringList(obj.value(QStringLiteral("capabilities")).toArray());
     const QStringList nativeCapabilities = jsonArrayToStringList(obj.value(QStringLiteral("native_capabilities")).toArray());
+    const QStringList missingNativeCapabilities =
+        jsonArrayToStringList(obj.value(QStringLiteral("missing_native_capabilities")).toArray());
     const QString suffix =
         capabilities.isEmpty() ? QString() : QStringLiteral(" capabilities=%1").arg(capabilities.join(QStringLiteral(",")));
     const QString nativeSuffix = nativeCapabilities.isEmpty()
                                      ? QString()
                                      : QStringLiteral(" native_capabilities=%1").arg(nativeCapabilities.join(QStringLiteral(",")));
-    appendLogLine(QStringLiteral("engine_probe: %1 %2%3%4").arg(id, status, suffix, nativeSuffix), QStringLiteral("engine"),
-                  profileId);
+    const QString missingSuffix = missingNativeCapabilities.isEmpty()
+                                      ? QString()
+                                      : QStringLiteral(" missing_native=%1").arg(missingNativeCapabilities.join(QStringLiteral(",")));
+    appendLogLine(QStringLiteral("engine_probe: %1 %2%3%4%5").arg(id, status, suffix, nativeSuffix, missingSuffix),
+                  QStringLiteral("engine"), profileId);
     emit selectedProfileChanged();
   });
 

@@ -168,6 +168,11 @@ void IpcServer::onPeerJson(const QJsonObject& obj) {
           nativeCapabilities.push_back(capability);
         }
         result.insert(QStringLiteral("native_capabilities"), nativeCapabilities);
+        QJsonArray missingNativeCapabilities;
+        for (const auto& capability : dokeProbe.missingNativeCapabilities) {
+          missingNativeCapabilities.push_back(capability);
+        }
+        result.insert(QStringLiteral("missing_native_capabilities"), missingNativeCapabilities);
       }
     }
     m_peer->send(result);
@@ -177,7 +182,7 @@ void IpcServer::onPeerJson(const QJsonObject& obj) {
   if (type == QStringLiteral("profile.start") || type == QStringLiteral("profile.stop")) {
     m_profileRuntimeManager->handleMessage(
         obj,
-        [this](const QString& profileId, const QString& status, const QString& error) {
+        [this](const QString& profileId, const QString& status, const QString& error, int debugPort) {
           if (!m_peer) {
             return;
           }
@@ -186,6 +191,9 @@ void IpcServer::onPeerJson(const QJsonObject& obj) {
           msg.insert(QStringLiteral("profile_id"), profileId);
           msg.insert(QStringLiteral("status"), status);
           msg.insert(QStringLiteral("error"), error);
+          if (debugPort > 0) {
+            msg.insert(QStringLiteral("debug_port"), debugPort);
+          }
           m_peer->send(msg);
         },
         [this](const QString& message) {

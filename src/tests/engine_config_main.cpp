@@ -108,6 +108,7 @@ bool testExecutableResolution(const QString& executable, const QString& nonExecu
 bool testArgumentOrdering(const QString& json, const QString& profileDir) {
   DokeChromiumEngine::LaunchOptions options;
   options.engineConfigJson = json;
+  options.runtimeConfigPath = QDir(profileDir).filePath(QStringLiteral("Doke/runtime.json"));
   options.chromium.userDataDir = profileDir;
   options.chromium.url = QStringLiteral("https://example.test/");
   options.chromium.proxyArg = QStringLiteral("--proxy-server=http://127.0.0.1:18080");
@@ -117,12 +118,16 @@ bool testArgumentOrdering(const QString& json, const QString& profileDir) {
   const QStringList args = DokeChromiumEngine::buildArguments(options, false);
   const int extraA = args.indexOf(QStringLiteral("--doke-a=1"));
   const int extraB = args.indexOf(QStringLiteral("--doke-b"));
+  const int runtimeConfig =
+      args.indexOf(QStringLiteral("--doke-runtime-config=%1").arg(QDir(profileDir).filePath(QStringLiteral("Doke/runtime.json"))));
   const int url = args.indexOf(QStringLiteral("https://example.test/"));
 
   bool ok = true;
   ok &= expect(extraA >= 0 && extraB >= 0, "extra args were not added");
+  ok &= expect(runtimeConfig >= 0, "runtime config arg was not added");
   ok &= expect(url == args.size() - 1, "final URL is not the final argument");
   ok &= expect(extraA < url && extraB < url, "extra args must be inserted before the final URL");
+  ok &= expect(runtimeConfig < url, "runtime config arg must be inserted before the final URL");
   ok &= expect(args.contains(QStringLiteral("--proxy-server=http://127.0.0.1:18080")),
                "system chrome args were not preserved");
   ok &= expect(args.contains(QStringLiteral("--remote-debugging-port=9222")), "debug port arg was not preserved");

@@ -1,0 +1,25 @@
+Doke-Purpose: Apply Doke runtime hardware metric values as Doke-specific Chrome command-line switches.
+Doke-Subsystem: chrome/app startup command-line handling.
+Doke-Detection-Target: BrowserScan, CreepJS, and deviceandbrowserinfo hardware consistency checks.
+Doke-Rollback: Remove this patch from patches/chromium/series and rebuild Chromium; DokeBrowser will continue using existing Agent/CDP fallback paths.
+
+diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
+--- a/chrome/app/chrome_main.cc
++++ b/chrome/app/chrome_main.cc
+@@ -76,6 +76,8 @@ constexpr char kDokeWebRtcIpHandlingPolicySwitch[] = "force-webrtc-ip-handling-
+ constexpr char kDokeWindowSizeSwitch[] = "window-size";
+ constexpr char kDokeDeviceScaleFactorSwitch[] = "force-device-scale-factor";
+ constexpr char kDokeTouchEventsSwitch[] = "touch-events";
++constexpr char kDokeHardwareConcurrencySwitch[] = "doke-hardware-concurrency";
++constexpr char kDokeDeviceMemoryGbSwitch[] = "doke-device-memory-gb";
+ 
+ void AppendStringSwitchIfAbsent(base::CommandLine& command_line,
+                                 const char* switch_name,
+@@ -175,5 +177,7 @@ void MaybeLoadDokeRuntimeConfig(base::CommandLine& command_line) {
+     AppendStringSwitchIfAbsent(command_line, kDokeWindowSizeSwitch, *fingerprint, "window_size");
+     AppendStringSwitchIfAbsent(command_line, kDokeDeviceScaleFactorSwitch, *fingerprint, "device_scale_factor_arg");
+     AppendStringSwitchIfAbsent(command_line, kDokeTouchEventsSwitch, *fingerprint, "touch_events");
++    AppendStringSwitchIfAbsent(command_line, kDokeHardwareConcurrencySwitch, *fingerprint, "hardware_concurrency_arg");
++    AppendStringSwitchIfAbsent(command_line, kDokeDeviceMemoryGbSwitch, *fingerprint, "device_memory_gb_arg");
+     MaybeLogDokeUaClientHints(*fingerprint);
+   }

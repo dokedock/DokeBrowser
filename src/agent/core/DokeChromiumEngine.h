@@ -17,6 +17,7 @@ public:
   struct LaunchOptions {
     SystemChromeEngine::LaunchOptions chromium;
     QString engineConfigJson;
+    QString runtimeConfigPath;
     bool humanize = false;
     bool geoip = false;
   };
@@ -34,6 +35,7 @@ public:
     QString probeProtocol;
     QStringList capabilities;
     QStringList nativeCapabilities;
+    QStringList missingNativeCapabilities;
   };
 
   QString id() const override;

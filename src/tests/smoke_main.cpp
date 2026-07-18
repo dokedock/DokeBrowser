@@ -87,6 +87,20 @@ QString agentPathFromTestExe() {
   return {};
 }
 
+QString repoRootFromTestExe() {
+  QDir d(QCoreApplication::applicationDirPath());
+  for (int i = 0; i < 8; ++i) {
+    const QString candidate = d.filePath(QStringLiteral("tools/doke_runtime_check.py"));
+    if (QFile::exists(candidate)) {
+      return d.absolutePath();
+    }
+    if (!d.cdUp()) {
+      break;
+    }
+  }
+  return {};
+}
+
 QString writeFakeDokeExecutable(QTemporaryDir& tempDir) {
 #if defined(Q_OS_WIN)
   const QString path = QDir(tempDir.path()).filePath(QStringLiteral("doke_chromium.bat"));
@@ -292,6 +306,17 @@ int main(int argc, char* argv[]) {
     qCritical("engine_probe_native_capabilities_mismatch");
     return 39;
   }
+  const QJsonArray missingNativeCapabilityArray =
+      availableProbeResult.obj.value(QStringLiteral("missing_native_capabilities")).toArray();
+  if (missingNativeCapabilityArray.contains(QStringLiteral("native_fingerprint"))
+      || missingNativeCapabilityArray.contains(QStringLiteral("native_proxy"))
+      || !missingNativeCapabilityArray.contains(QStringLiteral("native_geoip"))
+      || !missingNativeCapabilityArray.contains(QStringLiteral("native_humanize"))) {
+    agent.kill();
+    agent.waitForFinished(2000);
+    qCritical("engine_probe_missing_native_capabilities_mismatch");
+    return 40;
+  }
 
   const QString plainDokePath = writePlainFile(fakeDokeDir, QStringLiteral("doke_chromium.txt"));
   if (plainDokePath.isEmpty()) {
@@ -340,15 +365,20 @@ int main(int argc, char* argv[]) {
   }
 
   const QString fakeDokeProfileId = QStringLiteral("smoke-doke-start");
+  const QString fakeDokeProfileDataDir = QDir(fakeDokeDir.path()).filePath(QStringLiteral("profile-data"));
   QJsonObject dokeStart;
   dokeStart.insert(QStringLiteral("type"), QStringLiteral("profile.start"));
   dokeStart.insert(QStringLiteral("profile_id"), fakeDokeProfileId);
   dokeStart.insert(QStringLiteral("profile_name"), QStringLiteral("Smoke Doke"));
-  dokeStart.insert(QStringLiteral("data_dir"), QDir(fakeDokeDir.path()).filePath(QStringLiteral("profile-data")));
+  dokeStart.insert(QStringLiteral("data_dir"), fakeDokeProfileDataDir);
   dokeStart.insert(QStringLiteral("browser_engine"), QStringLiteral("doke_chromium"));
   dokeStart.insert(QStringLiteral("engine_config_json"),
                    QString::fromUtf8(QJsonDocument(availableDokeConfig).toJson(QJsonDocument::Compact)));
   dokeStart.insert(QStringLiteral("url"), QStringLiteral("about:blank"));
+  dokeStart.insert(QStringLiteral("geo_enabled"), true);
+  dokeStart.insert(QStringLiteral("geo_latitude"), 35.6895);
+  dokeStart.insert(QStringLiteral("geo_longitude"), 139.6917);
+  dokeStart.insert(QStringLiteral("geo_accuracy"), 100);
   framed.send(dokeStart);
 
   const auto dokeRunning =
@@ -358,6 +388,54 @@ int main(int argc, char* argv[]) {
     agent.waitForFinished(2000);
     qCritical("doke_profile_start_running_timeout");
     return 14;
+  }
+
+  const QString runtimeConfigPath = QDir(fakeDokeProfileDataDir).filePath(QStringLiteral("Doke/runtime.json"));
+  QFile runtimeConfigFile(runtimeConfigPath);
+  if (!runtimeConfigFile.open(QIODevice::ReadOnly)) {
+    agent.kill();
+    agent.waitForFinished(2000);
+    qCritical("doke_runtime_config_missing");
+    return 41;
+  }
+  const QJsonObject runtimeConfig = QJsonDocument::fromJson(runtimeConfigFile.readAll()).object();
+  const QJsonObject runtimeNative = runtimeConfig.value(QStringLiteral("native")).toObject();
+  const QJsonObject runtimeFallback = runtimeConfig.value(QStringLiteral("fallback")).toObject();
+  const QJsonArray runtimeMissing = runtimeNative.value(QStringLiteral("missing")).toArray();
+  if (runtimeConfig.value(QStringLiteral("schema")).toString() != QStringLiteral("doke_profile_runtime.v1")
+      || !runtimeNative.value(QStringLiteral("fingerprint")).toBool(false)
+      || runtimeNative.value(QStringLiteral("geoip")).toBool(true)
+      || !runtimeFallback.value(QStringLiteral("geoip")).toBool(false)
+      || !runtimeMissing.contains(QStringLiteral("native_geoip"))
+      || !runtimeMissing.contains(QStringLiteral("native_humanize"))) {
+    agent.kill();
+    agent.waitForFinished(2000);
+    qCritical("doke_runtime_config_mismatch");
+    return 42;
+  }
+
+  const QString repoRoot = repoRootFromTestExe();
+  if (repoRoot.isEmpty()) {
+    agent.kill();
+    agent.waitForFinished(2000);
+    qCritical("repo_root_not_found");
+    return 43;
+  }
+  QProcess runtimeCheck;
+  runtimeCheck.setProgram(QStringLiteral("python3"));
+  runtimeCheck.setArguments(QStringList{QDir(repoRoot).filePath(QStringLiteral("tools/doke_runtime_check.py")), runtimeConfigPath,
+                                        QStringLiteral("--require-supported"), QStringLiteral("native_fingerprint"),
+                                        QStringLiteral("--require-native"), QStringLiteral("fingerprint"),
+                                        QStringLiteral("--forbid-native"), QStringLiteral("geoip"),
+                                        QStringLiteral("--require-fallback"), QStringLiteral("geoip")});
+  runtimeCheck.start();
+  if (!runtimeCheck.waitForFinished(5000) || runtimeCheck.exitCode() != 0) {
+    agent.kill();
+    agent.waitForFinished(2000);
+    qWarning().noquote() << runtimeCheck.readAllStandardOutput();
+    qWarning().noquote() << runtimeCheck.readAllStandardError();
+    qCritical("doke_runtime_config_tool_failed");
+    return 44;
   }
 
   QJsonObject dokeStop;

@@ -1,0 +1,105 @@
+{
+  "schema": "doke_detection_sites.v1",
+  "sites": [
+    {
+      "id": "browserscan_overview",
+      "name": "BrowserScan Overview",
+      "url": "https://www.browserscan.net/",
+      "purpose": "Overall browser, IP, WebRTC, fingerprint, timezone, language, and bot consistency.",
+      "signals": [
+        "ua",
+        "ua_ch",
+        "ip_geo",
+        "timezone",
+        "language",
+        "webrtc",
+        "canvas",
+        "webgl",
+        "audio",
+        "screen",
+        "hardware",
+        "bot"
+      ]
+    },
+    {
+      "id": "browserscan_bot",
+      "name": "BrowserScan Bot Detection",
+      "url": "https://www.browserscan.net/bot-detection",
+      "purpose": "WebDriver, CDP, navigator, user-agent, and automation signal checks.",
+      "signals": [
+        "webdriver",
+        "cdp",
+        "navigator",
+        "ua",
+        "automation"
+      ]
+    },
+    {
+      "id": "creepjs",
+      "name": "CreepJS",
+      "url": "https://abrahamjuliot.github.io/creepjs",
+      "purpose": "High-signal fingerprint lies, trash, stability, rendering, fonts, plugins, and automation rows.",
+      "signals": [
+        "trust_score",
+        "lies",
+        "trash",
+        "canvas",
+        "webgl",
+        "audio",
+        "fonts",
+        "plugins",
+        "client_rects",
+        "timezone",
+        "automation"
+      ]
+    },
+    {
+      "id": "fingerprintjs_demo",
+      "name": "FingerprintJS Demo",
+      "url": "https://fingerprintjs.github.io/fingerprintjs",
+      "purpose": "Visitor identifier stability across restarts and expected drift across seed changes.",
+      "signals": [
+        "visitor_id",
+        "stability"
+      ]
+    },
+    {
+      "id": "deviceandbrowserinfo",
+      "name": "deviceandbrowserinfo",
+      "url": "https://deviceandbrowserinfo.com/info_device",
+      "purpose": "Device/browser fingerprint, UA-CH, CDP automation, webdriver, canvas, WebGL, timezone, and worker consistency.",
+      "signals": [
+        "ua",
+        "ua_ch",
+        "headers",
+        "gpu",
+        "canvas",
+        "webgl",
+        "audio",
+        "webdriver",
+        "cdp",
+        "worker",
+        "timezone",
+        "language"
+      ]
+    },
+    {
+      "id": "bot_incolumitas",
+      "name": "bot.incolumitas",
+      "url": "https://bot.incolumitas.com/",
+      "purpose": "Headless Chrome, WebDriver, CDP, behavioral bot score, browser fingerprint, TLS/header, and proxy/VPN signals.",
+      "signals": [
+        "behavioral_score",
+        "webdriver",
+        "cdp",
+        "headless",
+        "headers",
+        "tls",
+        "canvas",
+        "webgl",
+        "worker",
+        "proxy_vpn"
+      ]
+    }
+  ]
+}

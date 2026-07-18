@@ -6,6 +6,25 @@ import sys
 import time
 
 
+NATIVE_FEATURE_FLAGS = {
+    "--native-fingerprint": "native_fingerprint",
+    "--native-proxy": "native_proxy",
+    "--native-geoip": "native_geoip",
+    "--native-humanize": "native_humanize",
+}
+
+NATIVE_FEATURE_ALIASES = {
+    "fingerprint": "native_fingerprint",
+    "proxy": "native_proxy",
+    "geoip": "native_geoip",
+    "humanize": "native_humanize",
+    "native_fingerprint": "native_fingerprint",
+    "native_proxy": "native_proxy",
+    "native_geoip": "native_geoip",
+    "native_humanize": "native_humanize",
+}
+
+
 def sock_path():
     tmpdir = os.environ.get("TMPDIR") or "/tmp"
     return os.path.join(tmpdir, "dokebrowser_agent_ipc_v1")
@@ -42,19 +61,54 @@ def read_loop(sock, seconds):
             pass
 
 
-def engine_config(executable="", extra_args=None, native=False):
+def all_native_features():
+    return {
+        "native_fingerprint": True,
+        "native_proxy": True,
+        "native_geoip": True,
+        "native_humanize": True,
+    }
+
+
+def parse_native_flags(values):
+    features = {}
+    rest = []
+    for value in values:
+        if value == "--native":
+            features.update(all_native_features())
+            continue
+        if value in NATIVE_FEATURE_FLAGS:
+            features[NATIVE_FEATURE_FLAGS[value]] = True
+            continue
+        if value.startswith("--native="):
+            names = [part.strip().lower() for part in value.split("=", 1)[1].split(",")]
+            for name in names:
+                if not name:
+                    continue
+                if name == "all":
+                    features.update(all_native_features())
+                    continue
+                feature = NATIVE_FEATURE_ALIASES.get(name)
+                if feature:
+                    features[feature] = True
+            continue
+        rest.append(value)
+    return features, rest
+
+
+def engine_config(executable="", extra_args=None, native=False, features=None):
     cfg = {}
     if executable:
         cfg["executable"] = executable
     if extra_args:
         cfg["extra_args"] = extra_args
+    feature_map = {}
     if native:
-        cfg["features"] = {
-            "native_fingerprint": True,
-            "native_proxy": True,
-            "native_geoip": True,
-            "native_humanize": True,
-        }
+        feature_map.update(all_native_features())
+    if features:
+        feature_map.update(features)
+    if feature_map:
+        cfg["features"] = feature_map
     return json.dumps(cfg, separators=(",", ":"))
 
 
@@ -80,13 +134,14 @@ def main():
         engine = sys.argv[2] if len(sys.argv) > 2 else "doke_chromium"
         executable = sys.argv[3] if len(sys.argv) > 3 else os.environ.get("DOKE_CHROMIUM_PATH", "")
         profile_id = sys.argv[4] if len(sys.argv) > 4 else "cli-probe"
+        features, _ = parse_native_flags(sys.argv[5:])
         send(
             s,
             {
                 "type": "engine.probe",
                 "profile_id": profile_id,
                 "browser_engine": engine,
-                "engine_config_json": engine_config(executable),
+                "engine_config_json": engine_config(executable, features=features),
             },
         )
         read_loop(s, 2.0)
@@ -97,7 +152,7 @@ def main():
         executable = sys.argv[3] if len(sys.argv) > 3 else os.environ.get("DOKE_CHROMIUM_PATH", "")
         data_dir = sys.argv[4] if len(sys.argv) > 4 else os.path.join(os.environ.get("TMPDIR") or "/tmp", "doke_cli_profile")
         url = sys.argv[5] if len(sys.argv) > 5 else "about:blank"
-        extra_args = sys.argv[6:] if len(sys.argv) > 6 else []
+        features, extra_args = parse_native_flags(sys.argv[6:] if len(sys.argv) > 6 else [])
         os.makedirs(data_dir, exist_ok=True)
         send(
             s,
@@ -108,7 +163,7 @@ def main():
                 "data_dir": data_dir,
                 "url": url,
                 "browser_engine": "doke_chromium",
-                "engine_config_json": engine_config(executable, extra_args),
+                "engine_config_json": engine_config(executable, extra_args, features=features),
             },
         )
         read_loop(s, 8.0)

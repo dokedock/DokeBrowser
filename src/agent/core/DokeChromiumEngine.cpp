@@ -130,6 +130,16 @@ QStringList stringListFromJsonArray(const QJsonArray& values) {
   return out;
 }
 
+QStringList missingCapabilities(const QStringList& requested, const QStringList& supported) {
+  QStringList out;
+  for (const auto& capability : requested) {
+    if (!supported.contains(capability) && !out.contains(capability)) {
+      out << capability;
+    }
+  }
+  return out;
+}
+
 QByteArray jsonObjectPayload(const QByteArray& raw) {
   const QByteArray trimmed = raw.trimmed();
   if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
@@ -233,6 +243,9 @@ DokeChromiumEngine::ProbeResult DokeChromiumEngine::probe(const QString& engineC
       applyNativeProbeJson(out, nativeJson);
     }
   }
+  if (out.nativeProbeError.isEmpty()) {
+    out.missingNativeCapabilities = missingCapabilities(out.capabilities, out.nativeCapabilities);
+  }
 
   if (!out.version.isEmpty()) {
     return out;
@@ -282,8 +295,11 @@ QStringList DokeChromiumEngine::buildArguments(const LaunchOptions& options, boo
   QStringList args = SystemChromeEngine::buildArguments(options.chromium, compat);
   const Config config = parseConfig(options.engineConfigJson);
 
-  if (!config.extraArgs.isEmpty()) {
+  if (!options.runtimeConfigPath.isEmpty() || !config.extraArgs.isEmpty()) {
     const QString startUrl = args.isEmpty() ? QString() : args.takeLast();
+    if (!options.runtimeConfigPath.isEmpty()) {
+      args << QStringLiteral("--doke-runtime-config=%1").arg(options.runtimeConfigPath);
+    }
     args << config.extraArgs;
     if (!startUrl.isEmpty()) {
       args << startUrl;

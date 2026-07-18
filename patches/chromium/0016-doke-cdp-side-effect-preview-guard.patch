@@ -1,0 +1,125 @@
+Doke-Purpose: Disable side-effect-prone CDP previews when the Doke CDP side-effect guard is enabled.
+Doke-Subsystem: chrome/app runtime config bridge and V8 inspector Runtime/console preview wrapping.
+Doke-Detection-Target: CreepJS, bot.incolumitas, and deviceandbrowserinfo CDP side-effect probes that observe getter-triggered preview serialization.
+Doke-Rollback: Remove this patch from patches/chromium/series and rebuild Chromium; CDP preview behavior returns to upstream Chromium defaults.
+
+diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
+--- a/chrome/app/chrome_main.cc
++++ b/chrome/app/chrome_main.cc
+@@ -141,7 +141,8 @@ constexpr char kDokeWebdriverPolicySwitch[] = "doke-webdriver-policy";
+ constexpr char kDokeDevtoolsExposureSwitch[] = "doke-devtools-exposure";
+ constexpr char kDokeCdpSideEffectGuardSwitch[] = "doke-cdp-side-effect-guard";
+ constexpr char kDokeDebugPortRequiredSwitch[] = "doke-debug-port-required";
+ constexpr char kDokeStartupAutomationControlledSwitch[] = "doke-startup-automation-controlled";
++constexpr char kDokeCdpSideEffectGuardEnv[] = "DOKE_CDP_SIDE_EFFECT_GUARD";
+ 
+ void AppendStringSwitchIfAbsent(base::CommandLine& command_line,
+                                 const char* switch_name,
+@@ -248,6 +249,21 @@ void AppendAutomationSwitchesIfAbsent(base::CommandLine& command_line,
+   AppendBoolSwitchIfAbsent(command_line, kDokeStartupAutomationControlledSwitch, automation, "startup_automation_controlled");
+ }
+ 
++bool IsDokeBoolSwitchEnabled(const base::CommandLine& command_line,
++                             const char* switch_name) {
++  const std::string value = command_line.GetSwitchValueASCII(switch_name);
++  return value == "true" || value == "1" || value == "yes";
++}
++
++void ApplyDokeInspectorEnvironment(const base::CommandLine& command_line) {
++  if (!IsDokeBoolSwitchEnabled(command_line, kDokeCdpSideEffectGuardSwitch)) {
++    return;
++  }
++
++  std::unique_ptr<base::Environment> environment = base::Environment::Create();
++  environment->SetVar(kDokeCdpSideEffectGuardEnv, "1");
++}
++
+ void MaybeLogDokeUaClientHints(const base::Value::Dict& fingerprint) {
+   const base::Value::Dict* hints = fingerprint.FindDict(kDokeUaClientHintsKey);
+   if (!hints) {
+@@ -474,6 +490,7 @@ int ChromeMain(int argc, const char** argv) {
+   }
+ 
+   MaybeLoadDokeRuntimeConfig(*command_line);
++  ApplyDokeInspectorEnvironment(*command_line);
+ 
+   // Capture the unpolluted command line snapshot in the browser process.
+   // This must happen immediately after CommandLine::Init to ensure we capture
+diff --git a/v8/src/inspector/v8-runtime-agent-impl.cc b/v8/src/inspector/v8-runtime-agent-impl.cc
+--- a/v8/src/inspector/v8-runtime-agent-impl.cc
++++ b/v8/src/inspector/v8-runtime-agent-impl.cc
+@@ -27,6 +27,8 @@
+ 
+ #include "src/inspector/v8-runtime-agent-impl.h"
+ 
++#include <cstdlib>
++#include <cstring>
+ #include <inttypes.h>
+ 
+ #include <memory>
+@@ -68,6 +70,15 @@ using protocol::Runtime::RemoteObject;
+ 
+ namespace {
+ 
++constexpr char kDokeCdpSideEffectGuardEnv[] = "DOKE_CDP_SIDE_EFFECT_GUARD";
++
++bool IsDokeCdpSideEffectGuardEnabled() {
++  const char* value = std::getenv(kDokeCdpSideEffectGuardEnv);
++  return value && (std::strcmp(value, "1") == 0 ||
++                   std::strcmp(value, "true") == 0 ||
++                   std::strcmp(value, "yes") == 0);
++}
++
+ template <typename ProtocolCallback>
+ class EvaluateCallbackWrapper : public EvaluateCallback {
+  public:
+@@ -321,6 +334,10 @@ Response getWrapOptions(std::optional<bool> returnByValue,
+     *result = std::make_unique<WrapOptions>(WrapOptions{WrapMode::kJson});
+     return Response::Success();
+   }
++  if (IsDokeCdpSideEffectGuardEnabled() && generatePreview.value_or(false)) {
++    *result = std::make_unique<WrapOptions>(WrapOptions{WrapMode::kIdOnly});
++    return Response::Success();
++  }
+   if (generatePreview.value_or(false)) {
+     *result = std::make_unique<WrapOptions>(WrapOptions{WrapMode::kPreview});
+     return Response::Success();
+diff --git a/v8/src/inspector/v8-console-message.cc b/v8/src/inspector/v8-console-message.cc
+--- a/v8/src/inspector/v8-console-message.cc
++++ b/v8/src/inspector/v8-console-message.cc
+@@ -4,6 +4,8 @@
+ 
+ #include "src/inspector/v8-console-message.h"
+ 
++#include <cstdlib>
++#include <cstring>
+ #include <span>
+ 
+ #include "include/v8-container.h"
+@@ -24,6 +26,15 @@ namespace v8_inspector {
+ 
+ namespace {
+ 
++constexpr char kDokeCdpSideEffectGuardEnv[] = "DOKE_CDP_SIDE_EFFECT_GUARD";
++
++bool IsDokeCdpSideEffectGuardEnabled() {
++  const char* value = std::getenv(kDokeCdpSideEffectGuardEnv);
++  return value && (std::strcmp(value, "1") == 0 ||
++                   std::strcmp(value, "true") == 0 ||
++                   std::strcmp(value, "yes") == 0);
++}
++
+ String16 consoleAPITypeValue(ConsoleAPIType type) {
+   switch (type) {
+     case ConsoleAPIType::kLog:
+@@ -320,6 +333,10 @@ std::unique_ptr<protocol::Array<protocol::Runtime::RemoteObject>>
+ void V8ConsoleMessage::reportToFrontend(protocol::Runtime::Frontend* frontend,
+                                         V8InspectorSessionImpl* session,
+                                         bool generatePreview) const {
++  if (IsDokeCdpSideEffectGuardEnabled()) {
++    generatePreview = false;
++  }
++
+   int contextGroupId = session->contextGroupId();
+   V8InspectorImpl* inspector = session->inspector();
+   // Protect against reentrant debugger calls via interrupts.

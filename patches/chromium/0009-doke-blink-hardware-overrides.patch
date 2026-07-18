@@ -1,0 +1,91 @@
+Doke-Purpose: Override JS-visible hardwareConcurrency and deviceMemory from Doke command-line switches.
+Doke-Subsystem: third_party/blink navigator hardware and device memory surfaces.
+Doke-Detection-Target: BrowserScan, CreepJS, and deviceandbrowserinfo navigator hardware checks.
+Doke-Rollback: Remove this patch from patches/chromium/series and rebuild Chromium; DokeBrowser will continue using existing Agent/CDP fallback paths.
+
+diff --git a/third_party/blink/renderer/core/execution_context/navigator_base.cc b/third_party/blink/renderer/core/execution_context/navigator_base.cc
+--- a/third_party/blink/renderer/core/execution_context/navigator_base.cc
++++ b/third_party/blink/renderer/core/execution_context/navigator_base.cc
+@@ -5,6 +5,10 @@
+ 
+ #include "third_party/blink/renderer/core/execution_context/navigator_base.h"
+ 
++#include <optional>
++
++#include "base/command_line.h"
++#include "base/strings/string_number_conversions.h"
+ #include "base/feature_list.h"
+ #include "build/build_config.h"
+ #include "third_party/blink/public/common/features.h"
+@@ -22,6 +26,18 @@ namespace blink {
+ 
+ namespace {
+ 
++constexpr char kDokeHardwareConcurrencySwitch[] = "doke-hardware-concurrency";
++
++std::optional<unsigned int> GetDokeHardwareConcurrencyOverride() {
++  const std::string value = base::CommandLine::ForCurrentProcess()
++                                ->GetSwitchValueASCII(kDokeHardwareConcurrencySwitch);
++  unsigned parsed = 0;
++  if (!base::StringToUint(value, &parsed) || parsed == 0 || parsed > 128) {
++    return std::nullopt;
++  }
++  return parsed;
++}
++
+ String GetReducedNavigatorPlatform() {
+ #if BUILDFLAG(IS_ANDROID)
+   return "Linux armv81";
+@@ -75,5 +91,10 @@ unsigned int NavigatorBase::hardwareConcurrency() const {
+ 
+   probe::ApplyHardwareConcurrencyOverride(
+       probe::ToCoreProbeSink(GetExecutionContext()), hardware_concurrency);
++  std::optional<unsigned int> doke_hardware_concurrency =
++      GetDokeHardwareConcurrencyOverride();
++  if (doke_hardware_concurrency.has_value()) {
++    return doke_hardware_concurrency.value();
++  }
+   return hardware_concurrency;
+ }
+ 
+diff --git a/third_party/blink/renderer/core/frame/navigator_device_memory.cc b/third_party/blink/renderer/core/frame/navigator_device_memory.cc
+--- a/third_party/blink/renderer/core/frame/navigator_device_memory.cc
++++ b/third_party/blink/renderer/core/frame/navigator_device_memory.cc
+@@ -5,13 +5,37 @@
+ 
+ #include "third_party/blink/renderer/core/frame/navigator_device_memory.h"
+ 
++#include <optional>
++
++#include "base/command_line.h"
++#include "base/strings/string_number_conversions.h"
+ #include "third_party/blink/public/common/device_memory/approximated_device_memory.h"
+ #include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom-shared.h"
+ #include "third_party/blink/renderer/core/dom/document.h"
+ #include "third_party/blink/renderer/core/frame/local_dom_window.h"
+ 
+ namespace blink {
+ 
++namespace {
++
++constexpr char kDokeDeviceMemoryGbSwitch[] = "doke-device-memory-gb";
++
++std::optional<float> GetDokeDeviceMemoryOverride() {
++  const std::string value = base::CommandLine::ForCurrentProcess()
++                                ->GetSwitchValueASCII(kDokeDeviceMemoryGbSwitch);
++  double parsed = 0;
++  if (!base::StringToDouble(value, &parsed) || parsed <= 0 || parsed > 128) {
++    return std::nullopt;
++  }
++  return static_cast<float>(parsed);
++}
++
++}  // namespace
++
+ float NavigatorDeviceMemory::deviceMemory() const {
++  std::optional<float> doke_device_memory = GetDokeDeviceMemoryOverride();
++  if (doke_device_memory.has_value()) {
++    return doke_device_memory.value();
++  }
+   return ApproximatedDeviceMemory::GetApproximatedDeviceMemory();
+ }

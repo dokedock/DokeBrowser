@@ -1,0 +1,28 @@
+Doke-Purpose: Apply Doke runtime WebRTC IP handling policy as a native Chrome command-line switch.
+Doke-Subsystem: chrome/app startup command-line handling.
+Doke-Detection-Target: BrowserScan and CreepJS WebRTC IP leak checks.
+Doke-Rollback: Remove this patch from patches/chromium/series and rebuild Chromium; DokeBrowser will continue using existing Agent command-line fallback paths.
+
+diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
+--- a/chrome/app/chrome_main.cc
++++ b/chrome/app/chrome_main.cc
+@@ -72,6 +72,7 @@ constexpr char kDokeRuntimeConfigSwitch[] = "doke-runtime-config";
+ constexpr char kDokeRuntimeSchema[] = "doke_profile_runtime.v1";
+ constexpr char kDokeUserAgentSwitch[] = "user-agent";
+ constexpr char kDokeLanguageSwitch[] = "lang";
++constexpr char kDokeWebRtcIpHandlingPolicySwitch[] = "force-webrtc-ip-handling-policy";
+ 
+ void AppendStringSwitchIfAbsent(base::CommandLine& command_line,
+                                 const char* switch_name,
+@@ -173,6 +174,11 @@ void MaybeLoadDokeRuntimeConfig(base::CommandLine& command_line) {
+     MaybeLogDokeUaClientHints(*fingerprint);
+   }
+ 
++  const base::Value::Dict* webrtc = root.FindDict("webrtc");
++  if (webrtc) {
++    AppendStringSwitchIfAbsent(command_line, kDokeWebRtcIpHandlingPolicySwitch, *webrtc, "ip_handling_policy");
++  }
++
+   std::fprintf(stderr, "Doke runtime config loaded for profile %s\n",
+                profile_id->c_str());
+ }

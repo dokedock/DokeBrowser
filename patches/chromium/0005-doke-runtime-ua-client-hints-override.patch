@@ -1,0 +1,155 @@
+Doke-Purpose: Override Chromium UserAgentMetadata from Doke runtime UA-CH metadata.
+Doke-Subsystem: components/embedder_support user agent utilities.
+Doke-Detection-Target: navigator.userAgentData and Sec-CH-UA consistency on deviceandbrowserinfo and BrowserScan.
+Doke-Rollback: Remove this patch from patches/chromium/series and rebuild Chromium; DokeBrowser will continue using existing Agent/CDP fallback paths.
+
+diff --git a/components/embedder_support/user_agent_utils.cc b/components/embedder_support/user_agent_utils.cc
+--- a/components/embedder_support/user_agent_utils.cc
++++ b/components/embedder_support/user_agent_utils.cc
+@@ -18,13 +18,17 @@
+ #include "base/command_line.h"
+ #include "base/compiler_specific.h"
+ #include "base/feature_list.h"
++#include "base/files/file_path.h"
++#include "base/files/file_util.h"
++#include "base/json/json_reader.h"
+ #include "base/logging.h"
+ #include "base/no_destructor.h"
+ #include "base/strings/strcat.h"
+ #include "base/strings/string_number_conversions.h"
+ #include "base/strings/string_util.h"
+ #include "base/strings/stringprintf.h"
+ #include "base/system/sys_info.h"
++#include "base/values.h"
+ #include "base/version.h"
+ #include "build/branding_buildflags.h"
+ #include "build/build_config.h"
+@@ -53,8 +57,105 @@ namespace embedder_support {
+ namespace {
+ 
++
++constexpr char kDokeRuntimeConfigSwitch[] = "doke-runtime-config";
++constexpr char kDokeRuntimeSchema[] = "doke_profile_runtime.v1";
++
++bool ReadDokeBrandList(const base::Value::Dict& hints,
++                       const char* key,
++                       blink::UserAgentBrandList* out) {
++  const base::Value::List* values = hints.FindList(key);
++  if (!values || values->empty()) {
++    return false;
++  }
++
++  blink::UserAgentBrandList brands;
++  for (const base::Value& value : *values) {
++    const base::Value::Dict* item = value.GetIfDict();
++    if (!item) {
++      return false;
++    }
++    const std::string* brand = item->FindString("brand");
++    const std::string* version = item->FindString("version");
++    if (!brand || brand->empty() || !version || version->empty()) {
++      return false;
++    }
++    brands.emplace_back(*brand, *version);
++  }
++
++  *out = std::move(brands);
++  return true;
++}
++
++std::optional<blink::UserAgentMetadata> GetDokeUserAgentMetadataOverride() {
++  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
++  if (!command_line->HasSwitch(kDokeRuntimeConfigSwitch)) {
++    return std::nullopt;
++  }
++
++  const base::FilePath config_path =
++      command_line->GetSwitchValuePath(kDokeRuntimeConfigSwitch);
++  if (config_path.empty()) {
++    return std::nullopt;
++  }
++
++  std::string contents;
++  if (!base::ReadFileToString(config_path, &contents)) {
++    return std::nullopt;
++  }
++
++  std::optional<base::Value> parsed = base::JSONReader::Read(contents);
++  if (!parsed || !parsed->is_dict()) {
++    return std::nullopt;
++  }
++
++  const base::Value::Dict& root = parsed->GetDict();
++  const std::string* schema = root.FindString("schema");
++  if (!schema || *schema != kDokeRuntimeSchema) {
++    return std::nullopt;
++  }
++
++  const base::Value::Dict* fingerprint = root.FindDict("fingerprint");
++  if (!fingerprint) {
++    return std::nullopt;
++  }
++  const base::Value::Dict* hints = fingerprint->FindDict("ua_client_hints");
++  if (!hints) {
++    return std::nullopt;
++  }
++
++  blink::UserAgentMetadata metadata;
++  if (!ReadDokeBrandList(*hints, "brands", &metadata.brand_version_list) ||
++      !ReadDokeBrandList(*hints, "fullVersionList",
++                         &metadata.brand_full_version_list)) {
++    return std::nullopt;
++  }
++
++  const std::string* full_version = hints->FindString("fullVersion");
++  const std::string* platform = hints->FindString("platform");
++  if (!full_version || full_version->empty() || !platform || platform->empty()) {
++    return std::nullopt;
++  }
++
++  const std::string* platform_version = hints->FindString("platformVersion");
++  const std::string* architecture = hints->FindString("architecture");
++  const std::string* model = hints->FindString("model");
++  const std::string* bitness = hints->FindString("bitness");
++
++  metadata.full_version = *full_version;
++  metadata.platform = *platform;
++  metadata.platform_version = platform_version ? *platform_version : "";
++  metadata.architecture = architecture ? *architecture : "";
++  metadata.model = model ? *model : "";
++  metadata.bitness = bitness ? *bitness : "";
++  metadata.mobile = hints->FindBool("mobile").value_or(false);
++  metadata.form_factors = {
++      metadata.mobile ? blink::kMobileFormFactor : blink::kDesktopFormFactor};
++  return metadata;
++}
++
+ #if BUILDFLAG(IS_WIN)
+ 
+ // The registry key where the UniversalApiContract version value can be read
+ // from.
+ constexpr wchar_t kWindowsRuntimeWellKnownContractsRegKeyName[] =
+     L"SOFTWARE\\Microsoft\\WindowsRuntime\\WellKnownContracts";
+@@ -578,6 +666,22 @@ blink::UserAgentMetadata GetUserAgentMetadata(bool only_low_entropy_ch) {
+   metadata.mobile = GetMobileBitForUAMetadata();
+   metadata.platform = GetPlatformForUAMetadata();
+ 
++  std::optional<blink::UserAgentMetadata> doke_metadata =
++      GetDokeUserAgentMetadataOverride();
++  if (doke_metadata.has_value()) {
++    if (only_low_entropy_ch) {
++      doke_metadata->brand_full_version_list.clear();
++      doke_metadata->full_version.clear();
++      doke_metadata->architecture.clear();
++      doke_metadata->model.clear();
++      doke_metadata->form_factors.clear();
++      doke_metadata->bitness.clear();
++      doke_metadata->wow64 = false;
++      doke_metadata->platform_version.clear();
++    }
++    return doke_metadata.value();
++  }
++
+   // For users providing a valid user-agent override via the command line:
+   // If kUACHOverrideBlank is enabled, set user-agent metadata with the
+   // default blank values, otherwise return the default UserAgentMetadata values

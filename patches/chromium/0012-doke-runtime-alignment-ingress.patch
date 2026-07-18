@@ -1,0 +1,62 @@
+Doke-Purpose: Ingest Doke runtime language, timezone, geolocation, and proxy alignment metadata.
+Doke-Subsystem: chrome/app startup command-line handling.
+Doke-Detection-Target: BrowserScan, CreepJS, and location/timezone/proxy consistency checks.
+Doke-Rollback: Remove this patch from patches/chromium/series and rebuild Chromium; DokeBrowser will keep writing alignment metadata but Chromium will ignore it.
+
+diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
+--- a/chrome/app/chrome_main.cc
++++ b/chrome/app/chrome_main.cc
+@@ -52,6 +52,14 @@ constexpr char kDokeFontsPresetSwitch[] = "doke-fonts-preset";
+ constexpr char kDokeFontsSeedSwitch[] = "doke-fonts-seed";
+ constexpr char kDokeClientRectsPresetSwitch[] = "doke-client-rects-preset";
+ constexpr char kDokeClientRectsSeedSwitch[] = "doke-client-rects-seed";
++constexpr char kDokeAlignmentLanguageSwitch[] = "doke-alignment-language";
++constexpr char kDokeTimezoneIdSwitch[] = "doke-timezone-id";
++constexpr char kDokeGeoLatitudeSwitch[] = "doke-geo-latitude";
++constexpr char kDokeGeoLongitudeSwitch[] = "doke-geo-longitude";
++constexpr char kDokeGeoAccuracySwitch[] = "doke-geo-accuracy";
++constexpr char kDokeProxySchemeSwitch[] = "doke-proxy-scheme";
++constexpr char kDokeProxyHostSwitch[] = "doke-proxy-host";
++constexpr char kDokeProxyPortSwitch[] = "doke-proxy-port";
+ 
+ void AppendStringSwitchIfAbsent(base::CommandLine& command_line,
+                                 const char* switch_name,
+@@ -110,6 +118,26 @@ void AppendSurfaceSeedSwitchIfAbsent(base::CommandLine& command_line,
+   AppendStringSwitchIfAbsent(command_line, switch_name, *section, "seed");
+ }
+ 
++void AppendAlignmentSwitchesIfAbsent(base::CommandLine& command_line,
++                                     const base::Value::Dict& alignment) {
++  AppendStringSwitchIfAbsent(command_line, kDokeAlignmentLanguageSwitch, alignment, "language");
++  AppendStringSwitchIfAbsent(command_line, kDokeTimezoneIdSwitch, alignment, "timezone");
++
++  const base::Value::Dict* geo = alignment.FindDict("geo");
++  if (geo) {
++    AppendStringSwitchIfAbsent(command_line, kDokeGeoLatitudeSwitch, *geo, "latitude_arg");
++    AppendStringSwitchIfAbsent(command_line, kDokeGeoLongitudeSwitch, *geo, "longitude_arg");
++    AppendStringSwitchIfAbsent(command_line, kDokeGeoAccuracySwitch, *geo, "accuracy_arg");
++  }
++
++  const base::Value::Dict* proxy = alignment.FindDict("proxy");
++  if (proxy) {
++    AppendStringSwitchIfAbsent(command_line, kDokeProxySchemeSwitch, *proxy, "scheme");
++    AppendStringSwitchIfAbsent(command_line, kDokeProxyHostSwitch, *proxy, "host");
++    AppendStringSwitchIfAbsent(command_line, kDokeProxyPortSwitch, *proxy, "port_arg");
++  }
++}
++
+ void MaybeLogDokeUaClientHints(const base::Value::Dict& fingerprint) {
+   const base::Value::Dict* hints = fingerprint.FindDict(kDokeUaClientHintsKey);
+   if (!hints) {
+@@ -217,6 +245,11 @@ void MaybeLoadDokeRuntimeConfig(base::CommandLine& command_line) {
+     AppendSurfaceSeedSwitchIfAbsent(command_line, *surfaces, "client_rects", kDokeClientRectsSeedSwitch);
+   }
+ 
++  const base::Value::Dict* alignment = root.FindDict("alignment");
++  if (alignment) {
++    AppendAlignmentSwitchesIfAbsent(command_line, *alignment);
++  }
++
+   const base::Value::Dict* webrtc = root.FindDict("webrtc");
+   if (webrtc) {
+     AppendStringSwitchIfAbsent(command_line, kDokeWebRtcIpHandlingPolicySwitch, *webrtc, "ip_handling_policy");
