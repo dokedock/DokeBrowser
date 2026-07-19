@@ -172,6 +172,9 @@ bool testDokeMissingNativeCapabilitiesFallsBack() {
   obj.insert(QStringLiteral("hardware_concurrency"), 8);
   obj.insert(QStringLiteral("device_memory_gb"), 16);
   obj.insert(QStringLiteral("device_scale_factor"), 2);
+  obj.insert(QStringLiteral("screen_color_depth"), 30);
+  obj.insert(QStringLiteral("screen_avail_width"), 1440);
+  obj.insert(QStringLiteral("screen_avail_height"), 829);
   obj.insert(QStringLiteral("timezone"), QStringLiteral("Asia/Tokyo"));
   obj.insert(QStringLiteral("resolution"), QStringLiteral("1440x900"));
   obj.insert(QStringLiteral("touch_enabled"), true);
@@ -316,6 +319,12 @@ bool testDokeMissingNativeCapabilitiesFallsBack() {
                "runtime config should include Chrome window-size value");
   ok &= expect(fingerprintRuntime.value(QStringLiteral("device_scale_factor_arg")).toString() == QStringLiteral("2"),
                "runtime config should include device scale factor arg");
+  ok &= expect(fingerprintRuntime.value(QStringLiteral("screen_color_depth_arg")).toString() == QStringLiteral("30"),
+               "runtime config should include screen color depth arg");
+  ok &= expect(fingerprintRuntime.value(QStringLiteral("screen_avail_width")).toInt() == 1440,
+               "runtime config should include screen avail width");
+  ok &= expect(fingerprintRuntime.value(QStringLiteral("screen_avail_height")).toInt() == 829,
+               "runtime config should include screen avail height");
   ok &= expect(fingerprintRuntime.value(QStringLiteral("hardware_concurrency_arg")).toString() == QStringLiteral("8"),
                "runtime config should include hardware concurrency arg");
   ok &= expect(fingerprintRuntime.value(QStringLiteral("device_memory_gb_arg")).toString() == QStringLiteral("16"),

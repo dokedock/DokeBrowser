@@ -122,7 +122,7 @@ def print_help():
                 "  hello",
                 "  engine-list",
                 "  probe-engine [engine] [executable] [profile_id] [--native|--native-fingerprint|--native-proxy|--native-geoip|--native-humanize]",
-                "  start-doke [profile_id] [executable] [data_dir] [url] [extra_args...]",
+                "  start-doke [profile_id] [executable] [data_dir] [url] [--capture-debug-port] [extra_args...]",
                 "  start [profile_id] [data_dir] [url] [language] [timezone] [resolution] [touch] [ua] [platform] [hardware] [memory] [scale] [geo] [lat] [lon] [accuracy]",
                 "  stop [profile_id]",
                 "  proxy-test [profile_id] [proxy_url]",
@@ -178,6 +178,10 @@ def main():
         data_dir = sys.argv[4] if len(sys.argv) > 4 else os.path.join(os.environ.get("TMPDIR") or "/tmp", "doke_cli_profile")
         url = sys.argv[5] if len(sys.argv) > 5 else "about:blank"
         features, extra_args = parse_native_flags(sys.argv[6:] if len(sys.argv) > 6 else [])
+        capture_debug_port = False
+        if "--capture-debug-port" in extra_args:
+            capture_debug_port = True
+            extra_args = [arg for arg in extra_args if arg != "--capture-debug-port"]
         os.makedirs(data_dir, exist_ok=True)
         send(
             s,
@@ -189,6 +193,7 @@ def main():
                 "url": url,
                 "browser_engine": "doke_chromium",
                 "engine_config_json": engine_config(executable, extra_args, features=features),
+                "capture_debug_port": capture_debug_port,
             },
         )
         read_loop(s, 15.0)

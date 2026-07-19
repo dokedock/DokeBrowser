@@ -158,7 +158,7 @@ UaClientHints buildUaClientHints(const QString& userAgent, const QString& naviga
   hints.bitness = hints.architecture.isEmpty() ? QString() : QStringLiteral("64");
   hints.mobile = ua.contains(QStringLiteral("Mobile"), Qt::CaseInsensitive);
   hints.brands = {
-      {QStringLiteral("Not/A)Brand"), QStringLiteral("8"), QStringLiteral("8.0.0.0")},
+      {QStringLiteral("Not;A=Brand"), QStringLiteral("8"), QStringLiteral("8.0.0.0")},
       {QStringLiteral("Chromium"), major, full},
       {QStringLiteral("Google Chrome"), major, full},
   };

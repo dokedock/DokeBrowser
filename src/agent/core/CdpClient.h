@@ -20,10 +20,14 @@ public:
     int hardwareConcurrency = 0;
     int deviceMemoryGb = 0;
     double deviceScaleFactor = 0;
+    int screenColorDepth = 0;
+    int screenAvailWidth = 0;
+    int screenAvailHeight = 0;
     quint32 seed = 0;
     QString timezone;
     QString resolution;
     bool touchEnabled = false;
+    bool deviceMetricsOverrideEnabled = true;
     bool geoEnabled = false;
     double geoLatitude = 0;
     double geoLongitude = 0;

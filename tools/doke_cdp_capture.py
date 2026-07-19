@@ -55,6 +55,8 @@ BODY_TEXT_EXPRESSION = r"""
 (() => (document.body ? document.body.innerText : '').slice(0, 200000))()
 """
 
+LOCAL_HTTP_OPENER = request.build_opener(request.ProxyHandler({}))
+
 
 def short_hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8", errors="ignore")).hexdigest()[:16]
@@ -142,23 +144,24 @@ def extract_site_signals(site_id: str, body_text: str) -> dict:
 
 
 def load_json_url(url: str, timeout: float) -> object:
-    with request.urlopen(url, timeout=timeout) as response:
+    with LOCAL_HTTP_OPENER.open(url, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
 def http_json(method: str, url: str, timeout: float) -> object:
     req = request.Request(url, method=method)
-    with request.urlopen(req, timeout=timeout) as response:
+    with LOCAL_HTTP_OPENER.open(req, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
-def ensure_page_target(debug_port: int, url: str, timeout: float) -> dict:
+def ensure_page_target(debug_port: int, url: str, timeout: float, force_new: bool = False) -> dict:
     base = f"http://127.0.0.1:{debug_port}"
-    targets = load_json_url(f"{base}/json/list", timeout)
-    if isinstance(targets, list):
-        for target in targets:
-            if target.get("type") == "page" and target.get("webSocketDebuggerUrl"):
-                return target
+    if not force_new:
+        targets = load_json_url(f"{base}/json/list", timeout)
+        if isinstance(targets, list):
+            for target in targets:
+                if target.get("type") == "page" and target.get("webSocketDebuggerUrl"):
+                    return target
     if not url:
         raise RuntimeError("no page target found and no url was provided")
     quoted_url = parse.quote(url, safe=":/?&=%#")
@@ -288,9 +291,9 @@ def wait_ready(ws: CdpWebSocket, timeout: float) -> None:
         time.sleep(0.25)
 
 
-def capture(debug_port: int, url: str, artifact_dir: Path, timeout: float, site_id: str = "") -> dict:
+def capture_once(debug_port: int, url: str, artifact_dir: Path, timeout: float, site_id: str, force_new: bool) -> dict:
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    target = ensure_page_target(debug_port, url, timeout)
+    target = ensure_page_target(debug_port, url, timeout, force_new=force_new)
     with CdpWebSocket(target["webSocketDebuggerUrl"], timeout) as ws:
         ws.command("Page.enable")
         ws.command("Runtime.enable")
@@ -339,6 +342,21 @@ def capture(debug_port: int, url: str, artifact_dir: Path, timeout: float, site_
     if screenshot_data:
         (artifact_dir / "screenshot.png").write_bytes(base64.b64decode(screenshot_data))
     return payload
+
+
+def capture(debug_port: int, url: str, artifact_dir: Path, timeout: float, site_id: str = "") -> dict:
+    last_error: Exception | None = None
+    for attempt in range(2):
+        try:
+            return capture_once(debug_port, url, artifact_dir, timeout, site_id, force_new=attempt > 0)
+        except Exception as exc:
+            last_error = exc
+            message = str(exc).lower()
+            retryable = "websocket closed" in message or "connection reset" in message
+            if not retryable or attempt == 1:
+                break
+            time.sleep(0.5)
+    raise RuntimeError(str(last_error or "cdp_capture_failed"))
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -129,6 +129,7 @@ ProfileRuntimeManager::~ProfileRuntimeManager() {
 
 void ProfileRuntimeManager::handleMessage(const QJsonObject& obj, StatusCallback status, LogCallback log) {
   const QString type = obj.value(QStringLiteral("type")).toString();
+  const bool captureDebugPort = obj.value(QStringLiteral("capture_debug_port")).toBool(false);
   const ProfileLaunch::StartRequest request = ProfileLaunch::parseStartRequest(obj);
   const QString& profileId = request.profileId;
   const QString& profileName = request.profileName;
@@ -144,6 +145,9 @@ void ProfileRuntimeManager::handleMessage(const QJsonObject& obj, StatusCallback
   const int hardwareConcurrency = request.hardwareConcurrency;
   const int deviceMemoryGb = request.deviceMemoryGb;
   const double deviceScaleFactor = request.deviceScaleFactor;
+  const int screenColorDepth = request.screenColorDepth;
+  const int screenAvailWidth = request.screenAvailWidth;
+  const int screenAvailHeight = request.screenAvailHeight;
   const QString& timezone = request.timezone;
   const QString& resolution = request.resolution;
   const bool touchEnabled = request.touchEnabled;
@@ -269,16 +273,21 @@ void ProfileRuntimeManager::handleMessage(const QJsonObject& obj, StatusCallback
   const bool fingerprintFallbackNeeded =
       !nativeFingerprint
       && (!language.isEmpty() || !userAgent.isEmpty() || !platform.isEmpty() || hardwareConcurrency > 0 || deviceMemoryGb > 0
-          || deviceScaleFactor > 0 || !timezone.isEmpty() || touchEnabled);
+          || deviceScaleFactor > 0 || screenColorDepth > 0 || screenAvailWidth > 0 || screenAvailHeight > 0
+          || !timezone.isEmpty() || touchEnabled);
   const bool geoFallbackNeeded = geoEnabled && !nativeGeoip;
   const bool needInject = fingerprintFallbackNeeded || geoFallbackNeeded;
   const bool cdpEnabled = needInject;
+  const bool debugPortRequired = cdpEnabled || captureDebugPort;
   const QString fallbackLanguage = fingerprintFallbackNeeded ? language : QString();
   const QString fallbackUserAgent = fingerprintFallbackNeeded ? userAgent : QString();
   const QString fallbackPlatform = fingerprintFallbackNeeded ? platform : QString();
   const int fallbackHardwareConcurrency = fingerprintFallbackNeeded ? hardwareConcurrency : 0;
   const int fallbackDeviceMemoryGb = fingerprintFallbackNeeded ? deviceMemoryGb : 0;
   const double fallbackDeviceScaleFactor = fingerprintFallbackNeeded ? deviceScaleFactor : 0;
+  const int fallbackScreenColorDepth = fingerprintFallbackNeeded ? screenColorDepth : 0;
+  const int fallbackScreenAvailWidth = fingerprintFallbackNeeded ? screenAvailWidth : 0;
+  const int fallbackScreenAvailHeight = fingerprintFallbackNeeded ? screenAvailHeight : 0;
   const QString fallbackTimezone = fingerprintFallbackNeeded ? timezone : QString();
   const QString fallbackResolution = fingerprintFallbackNeeded ? resolution : QString();
   const bool fallbackTouchEnabled = fingerprintFallbackNeeded && touchEnabled;
@@ -298,6 +307,9 @@ void ProfileRuntimeManager::handleMessage(const QJsonObject& obj, StatusCallback
     fingerprint.insert(QStringLiteral("hardware_concurrency"), hardwareConcurrency);
     fingerprint.insert(QStringLiteral("device_memory_gb"), deviceMemoryGb);
     fingerprint.insert(QStringLiteral("device_scale_factor"), deviceScaleFactor);
+    fingerprint.insert(QStringLiteral("screen_color_depth"), screenColorDepth);
+    fingerprint.insert(QStringLiteral("screen_avail_width"), screenAvailWidth);
+    fingerprint.insert(QStringLiteral("screen_avail_height"), screenAvailHeight);
     fingerprint.insert(QStringLiteral("timezone"), timezone);
     fingerprint.insert(QStringLiteral("resolution"), resolution);
     fingerprint.insert(QStringLiteral("touch_enabled"), touchEnabled);
@@ -308,6 +320,9 @@ void ProfileRuntimeManager::handleMessage(const QJsonObject& obj, StatusCallback
     if (deviceScaleFactor > 0) {
       fingerprint.insert(QStringLiteral("device_scale_factor_arg"),
                          QString::number(deviceScaleFactor, 'g', 8));
+    }
+    if (screenColorDepth > 0) {
+      fingerprint.insert(QStringLiteral("screen_color_depth_arg"), QString::number(screenColorDepth));
     }
     if (hardwareConcurrency > 0) {
       fingerprint.insert(QStringLiteral("hardware_concurrency_arg"), QString::number(hardwareConcurrency));
@@ -396,9 +411,10 @@ void ProfileRuntimeManager::handleMessage(const QJsonObject& obj, StatusCallback
     QJsonObject automation;
     automation.insert(QStringLiteral("webdriver_policy"), QStringLiteral("hide"));
     automation.insert(QStringLiteral("devtools_exposure"), cdpEnabled ? QStringLiteral("fallback_required")
+                                                                      : captureDebugPort ? QStringLiteral("capture_required")
                                                                       : QStringLiteral("minimize"));
     automation.insert(QStringLiteral("cdp_side_effect_guard"), true);
-    automation.insert(QStringLiteral("debug_port_required"), cdpEnabled);
+    automation.insert(QStringLiteral("debug_port_required"), debugPortRequired);
     automation.insert(QStringLiteral("startup_automation_controlled"), false);
 
     QJsonObject root;
@@ -440,6 +456,9 @@ void ProfileRuntimeManager::handleMessage(const QJsonObject& obj, StatusCallback
     extensionOptions.hardwareConcurrency = fallbackHardwareConcurrency;
     extensionOptions.deviceMemoryGb = fallbackDeviceMemoryGb;
     extensionOptions.deviceScaleFactor = fallbackDeviceScaleFactor;
+    extensionOptions.screenColorDepth = fallbackScreenColorDepth;
+    extensionOptions.screenAvailWidth = fallbackScreenAvailWidth;
+    extensionOptions.screenAvailHeight = fallbackScreenAvailHeight;
     extensionOptions.timezone = fallbackTimezone;
     extensionOptions.resolution = fallbackResolution;
     extensionOptions.touchEnabled = fallbackTouchEnabled;
@@ -460,12 +479,12 @@ void ProfileRuntimeManager::handleMessage(const QJsonObject& obj, StatusCallback
   }
 
   const QString url = obj.value(QStringLiteral("url")).toString().trimmed();
-  const int debugPort = cdpEnabled ? ProfileLaunch::allocateLocalTcpPort() : 0;
+  const int debugPort = debugPortRequired ? ProfileLaunch::allocateLocalTcpPort() : 0;
   if (debugPort > 0) {
     m_debugPortByProfileId.insert(profileId, debugPort);
   } else {
     m_debugPortByProfileId.remove(profileId);
-    if (cdpEnabled) {
+    if (debugPortRequired) {
       sendLogLine(QStringLiteral("cdp[%1] debug_port_allocation_failed; fallback cdp disabled").arg(profileId.left(8)));
     }
   }
@@ -553,10 +572,14 @@ void ProfileRuntimeManager::handleMessage(const QJsonObject& obj, StatusCallback
     cdpOptions.fingerprint.hardwareConcurrency = fallbackHardwareConcurrency;
     cdpOptions.fingerprint.deviceMemoryGb = fallbackDeviceMemoryGb;
     cdpOptions.fingerprint.deviceScaleFactor = fallbackDeviceScaleFactor;
+    cdpOptions.fingerprint.screenColorDepth = fallbackScreenColorDepth;
+    cdpOptions.fingerprint.screenAvailWidth = fallbackScreenAvailWidth;
+    cdpOptions.fingerprint.screenAvailHeight = fallbackScreenAvailHeight;
     cdpOptions.fingerprint.seed = fpSeed;
     cdpOptions.fingerprint.timezone = fallbackTimezone;
     cdpOptions.fingerprint.resolution = fallbackResolution;
     cdpOptions.fingerprint.touchEnabled = fallbackTouchEnabled;
+    cdpOptions.fingerprint.deviceMetricsOverrideEnabled = browserEngine != QStringLiteral("doke_chromium");
     cdpOptions.fingerprint.geoEnabled = geoFallbackNeeded;
     cdpOptions.fingerprint.geoLatitude = geoLatitude;
     cdpOptions.fingerprint.geoLongitude = geoLongitude;

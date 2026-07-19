@@ -38,6 +38,9 @@ bool testStartRequestParsing() {
   obj.insert(QStringLiteral("hardware_concurrency"), 8);
   obj.insert(QStringLiteral("device_memory_gb"), 16);
   obj.insert(QStringLiteral("device_scale_factor"), 2);
+  obj.insert(QStringLiteral("screen_color_depth"), 30);
+  obj.insert(QStringLiteral("screen_avail_width"), 1440);
+  obj.insert(QStringLiteral("screen_avail_height"), 829);
   obj.insert(QStringLiteral("timezone"), QStringLiteral(" Asia/Shanghai "));
   obj.insert(QStringLiteral("resolution"), QStringLiteral(" 1440x900 "));
   obj.insert(QStringLiteral("touch_enabled"), true);
@@ -61,6 +64,9 @@ bool testStartRequestParsing() {
   ok &= expect(request.hardwareConcurrency == 8, "hardware concurrency should parse");
   ok &= expect(request.deviceMemoryGb == 16, "device memory should parse");
   ok &= expect(request.deviceScaleFactor == 2, "device scale factor should parse");
+  ok &= expect(request.screenColorDepth == 30, "screen color depth should parse");
+  ok &= expect(request.screenAvailWidth == 1440, "screen avail width should parse");
+  ok &= expect(request.screenAvailHeight == 829, "screen avail height should parse");
   ok &= expect(request.timezone == QStringLiteral("Asia/Shanghai"), "timezone should be trimmed");
   ok &= expect(request.resolution == QStringLiteral("1440x900"), "resolution should be trimmed");
   ok &= expect(request.touchEnabled, "touch flag should parse");

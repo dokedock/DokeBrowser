@@ -107,6 +107,9 @@ QString CdpClient::buildInitScript() const {
     }
   }
   const double dpr = m_fp.deviceScaleFactor > 0 ? m_fp.deviceScaleFactor : 0;
+  const int colorDepth = m_fp.screenColorDepth > 0 ? m_fp.screenColorDepth : 0;
+  const int availW = m_fp.screenAvailWidth > 0 ? m_fp.screenAvailWidth : resW;
+  const int availH = m_fp.screenAvailHeight > 0 ? m_fp.screenAvailHeight : resH;
   const auto uaHints = FingerprintMetadata::buildUaClientHints(m_fp.userAgent, plat);
   inj += FingerprintMetadata::buildUserAgentDataScript(uaHints);
   if (!lang.isEmpty()) {
@@ -142,8 +145,8 @@ QString CdpClient::buildInitScript() const {
   }
   inj += QStringLiteral(
       "(function(){try{"
-      "try{Object.defineProperty(Navigator.prototype,'webdriver',{get:()=>undefined,configurable:true});}catch(e){}"
-      "try{Object.defineProperty(navigator,'webdriver',{get:()=>undefined,configurable:true});}catch(e){}"
+      "try{Object.defineProperty(Navigator.prototype,'webdriver',{get:()=>false,configurable:true});}catch(e){}"
+      "try{Object.defineProperty(navigator,'webdriver',{get:()=>false,configurable:true});}catch(e){}"
       "}catch(e){}})();");
 
   inj += QStringLiteral(
@@ -256,15 +259,26 @@ QString CdpClient::buildInitScript() const {
   if (resW > 0 && resH > 0) {
     inj += QStringLiteral(
                "(function(){try{"
-               "const w=%1;const h=%2;"
+               "const w=%1;const h=%2;const aw=%3;const ah=%4;"
                "try{const S=(window.Screen&&Screen.prototype)?Screen.prototype:null;"
                "if(S){"
                "const def=(k,v)=>{try{Object.defineProperty(S,k,{get:()=>v,configurable:true});}catch(e){}};"
-               "def('width',w);def('height',h);def('availWidth',w);def('availHeight',h);"
+               "def('width',w);def('height',h);def('availWidth',aw);def('availHeight',ah);"
                "}"
                "}catch(e){}"
                "}catch(e){}})();")
-               .arg(QString::number(resW), QString::number(resH));
+               .arg(QString::number(resW), QString::number(resH), QString::number(availW), QString::number(availH));
+  }
+  if (colorDepth > 0) {
+    inj += QStringLiteral(
+               "(function(){try{"
+               "const v=%1;"
+               "try{const S=(window.Screen&&Screen.prototype)?Screen.prototype:null;"
+               "if(S){const def=(k)=>{try{Object.defineProperty(S,k,{get:()=>v,configurable:true});}catch(e){}};"
+               "def('colorDepth');def('pixelDepth');}"
+               "}catch(e){}"
+               "}catch(e){}})();")
+               .arg(QString::number(colorDepth));
   }
   if (dpr > 0) {
     inj += QStringLiteral(
@@ -359,7 +373,7 @@ void CdpClient::applyToTarget(const QString& sessionId) {
       }
     }
   }
-  if (m_fp.enabled && w > 0 && h > 0) {
+  if (m_fp.enabled && m_fp.deviceMetricsOverrideEnabled && w > 0 && h > 0) {
     QJsonObject p;
     p.insert(QStringLiteral("width"), w);
     p.insert(QStringLiteral("height"), h);

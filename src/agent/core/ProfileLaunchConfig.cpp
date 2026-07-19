@@ -29,6 +29,9 @@ StartRequest parseStartRequest(const QJsonObject& obj) {
   request.hardwareConcurrency = obj.value(QStringLiteral("hardware_concurrency")).toInt(0);
   request.deviceMemoryGb = obj.value(QStringLiteral("device_memory_gb")).toInt(0);
   request.deviceScaleFactor = obj.value(QStringLiteral("device_scale_factor")).toDouble(0);
+  request.screenColorDepth = obj.value(QStringLiteral("screen_color_depth")).toInt(0);
+  request.screenAvailWidth = obj.value(QStringLiteral("screen_avail_width")).toInt(0);
+  request.screenAvailHeight = obj.value(QStringLiteral("screen_avail_height")).toInt(0);
   request.timezone = obj.value(QStringLiteral("timezone")).toString().trimmed();
   request.resolution = obj.value(QStringLiteral("resolution")).toString().trimmed();
   request.touchEnabled = obj.value(QStringLiteral("touch_enabled")).toBool(false);

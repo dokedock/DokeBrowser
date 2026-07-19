@@ -247,6 +247,9 @@ QString SystemChromeEngine::createProfileExtension(const ExtensionOptions& optio
     }
   }
   const double dpr = options.deviceScaleFactor > 0 ? options.deviceScaleFactor : 0;
+  const int colorDepth = options.screenColorDepth > 0 ? options.screenColorDepth : 0;
+  const int availW = options.screenAvailWidth > 0 ? options.screenAvailWidth : resW;
+  const int availH = options.screenAvailHeight > 0 ? options.screenAvailHeight : resH;
   const auto uaHints = FingerprintMetadata::buildUaClientHints(options.userAgent, plat);
   inj += FingerprintMetadata::buildUserAgentDataScript(uaHints);
   if (!lang.isEmpty()) {
@@ -282,8 +285,8 @@ QString SystemChromeEngine::createProfileExtension(const ExtensionOptions& optio
   }
   inj += QStringLiteral(
       "(function(){try{"
-      "try{Object.defineProperty(Navigator.prototype,'webdriver',{get:()=>undefined,configurable:true});}catch(e){}"
-      "try{Object.defineProperty(navigator,'webdriver',{get:()=>undefined,configurable:true});}catch(e){}"
+      "try{Object.defineProperty(Navigator.prototype,'webdriver',{get:()=>false,configurable:true});}catch(e){}"
+      "try{Object.defineProperty(navigator,'webdriver',{get:()=>false,configurable:true});}catch(e){}"
       "}catch(e){}})();");
 
   inj += QStringLiteral(
@@ -396,15 +399,26 @@ QString SystemChromeEngine::createProfileExtension(const ExtensionOptions& optio
   if (resW > 0 && resH > 0) {
     inj += QStringLiteral(
                "(function(){try{"
-               "const w=%1;const h=%2;"
+               "const w=%1;const h=%2;const aw=%3;const ah=%4;"
                "try{const S=(window.Screen&&Screen.prototype)?Screen.prototype:null;"
                "if(S){"
                "const def=(k,v)=>{try{Object.defineProperty(S,k,{get:()=>v,configurable:true});}catch(e){}};"
-               "def('width',w);def('height',h);def('availWidth',w);def('availHeight',h);"
+               "def('width',w);def('height',h);def('availWidth',aw);def('availHeight',ah);"
                "}"
                "}catch(e){}"
                "}catch(e){}})();")
-               .arg(QString::number(resW), QString::number(resH));
+               .arg(QString::number(resW), QString::number(resH), QString::number(availW), QString::number(availH));
+  }
+  if (colorDepth > 0) {
+    inj += QStringLiteral(
+               "(function(){try{"
+               "const v=%1;"
+               "try{const S=(window.Screen&&Screen.prototype)?Screen.prototype:null;"
+               "if(S){const def=(k)=>{try{Object.defineProperty(S,k,{get:()=>v,configurable:true});}catch(e){}};"
+               "def('colorDepth');def('pixelDepth');}"
+               "}catch(e){}"
+               "}catch(e){}})();")
+               .arg(QString::number(colorDepth));
   }
   if (dpr > 0) {
     inj += QStringLiteral(
@@ -649,12 +663,14 @@ QProcess* SystemChromeEngine::launchProcess(const ProcessLaunchOptions& options,
     }
   });
   QObject::connect(process, &QProcess::errorOccurred, owner,
-                   [shortId, processLabel, callbacks, sendStatus, sendLog](QProcess::ProcessError) {
+                   [process, shortId, processLabel, callbacks, sendStatus, sendLog](QProcess::ProcessError error) {
     if (callbacks.isStopRequested && callbacks.isStopRequested()) {
       return;
     }
-    sendStatus(QStringLiteral("error"), QStringLiteral("process_error"));
-    sendLog(QStringLiteral("%1[%2] error").arg(processLabel, shortId));
+    const QString errorCode = QStringLiteral("process_error_%1").arg(static_cast<int>(error));
+    sendStatus(QStringLiteral("error"), errorCode);
+    sendLog(QStringLiteral("%1[%2] error=%3 detail=%4")
+                .arg(processLabel, shortId, errorCode, process ? process->errorString() : QString()));
   });
   QObject::connect(process, &QProcess::finished, owner,
                    [process, options, callbacks, sendStatus, scheduleRunningCheck](int exitCode, QProcess::ExitStatus st) mutable {

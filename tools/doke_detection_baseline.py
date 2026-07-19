@@ -39,6 +39,21 @@ COMPARE_SNAPSHOT_FIELDS = (
     "mime_types_length",
 )
 NATIVE_FEATURES = ("native_fingerprint", "native_proxy", "native_geoip", "native_humanize")
+VOLATILE_COMPARE_FIELDS = {"extractor.body_text_hash", "extractor.body_text_length"}
+FINGERPRINT_FIELDS = (
+    "language",
+    "user_agent",
+    "platform",
+    "timezone",
+    "resolution",
+    "hardware_concurrency",
+    "device_memory_gb",
+    "device_scale_factor",
+    "screen_color_depth",
+    "screen_avail_width",
+    "screen_avail_height",
+    "touch_enabled",
+)
 
 
 def repo_root() -> Path:
@@ -102,7 +117,7 @@ def connect_ipc(timeout: float) -> socket.socket:
     raise RuntimeError(f"ipc_connect_failed:{last_error}")
 
 
-def wait_profile_status(sock: socket.socket, profile_id: str, statuses: set[str], timeout: float) -> dict:
+def wait_profile_status(sock: socket.socket, profile_id: str, statuses: set[str], timeout: float, verbose_logs: bool = False) -> dict:
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
@@ -111,6 +126,9 @@ def wait_profile_status(sock: socket.socket, profile_id: str, statuses: set[str]
             continue
         if not msg:
             continue
+        if msg.get("type") == "log.line" and verbose_logs:
+            print(f"agent_log {msg.get('message', '')}")
+            continue
         if msg.get("type") != "profile.status":
             continue
         if msg.get("profile_id") != profile_id:
@@ -118,6 +136,25 @@ def wait_profile_status(sock: socket.socket, profile_id: str, statuses: set[str]
         if str(msg.get("status", "")) in statuses:
             return msg
     raise RuntimeError(f"profile_status_timeout:{profile_id}:{','.join(sorted(statuses))}")
+
+
+def drain_ipc(sock: socket.socket, duration: float = 0.25) -> int:
+    previous_timeout = sock.gettimeout()
+    deadline = time.time() + duration
+    drained = 0
+    try:
+        sock.settimeout(0.05)
+        while time.time() < deadline:
+            try:
+                msg = recv_ipc(sock)
+            except socket.timeout:
+                continue
+            if not msg:
+                continue
+            drained += 1
+    finally:
+        sock.settimeout(previous_timeout)
+    return drained
 
 
 def repo_relative(path: Path) -> str:
@@ -156,6 +193,19 @@ def profile_data_dir(payload: dict) -> str:
     )
 
 
+def fingerprint_from_payload(payload: dict) -> dict:
+    fp = payload.get("fingerprint", {})
+    if not isinstance(fp, dict):
+        return {}
+    out: dict[str, object] = {}
+    for key in FINGERPRINT_FIELDS:
+        value = fp.get(key)
+        if value in ("", None, [], {}):
+            continue
+        out[key] = value
+    return out
+
+
 def start_message(payload: dict, url: str, native_features: list[str] | None = None) -> dict:
     engine = str(payload.get("engine", "system_chrome"))
     msg = {
@@ -165,7 +215,9 @@ def start_message(payload: dict, url: str, native_features: list[str] | None = N
         "data_dir": profile_data_dir(payload),
         "url": url,
         "browser_engine": engine,
+        "capture_debug_port": True,
     }
+    msg.update(fingerprint_from_payload(payload))
     if engine == "doke_chromium":
         msg["engine_config_json"] = engine_config_json(payload, native_features)
     return msg
@@ -209,6 +261,16 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def fingerprint_from_args(args: argparse.Namespace) -> dict:
+    out: dict[str, object] = {}
+    for key in FINGERPRINT_FIELDS:
+        value = getattr(args, key, None)
+        if value in ("", None, [], {}):
+            continue
+        out[key] = value
+    return out
+
+
 def make_run(args: argparse.Namespace, sites: list[dict]) -> dict:
     created = utc_now()
     run_id = args.run_id.strip() if args.run_id else f"{created[:10]}-{args.engine}-{slug(args.profile_id)}"
@@ -219,7 +281,7 @@ def make_run(args: argparse.Namespace, sites: list[dict]) -> dict:
         if missing:
             raise ValueError(f"unknown site id(s): {','.join(missing)}")
 
-    return {
+    payload = {
         "schema": SCHEMA,
         "run_id": run_id,
         "created_at_utc": created,
@@ -250,6 +312,10 @@ def make_run(args: argparse.Namespace, sites: list[dict]) -> dict:
             for site in filtered_sites
         ],
     }
+    fingerprint = fingerprint_from_args(args)
+    if fingerprint:
+        payload["fingerprint"] = fingerprint
+    return payload
 
 
 def validate_run(payload: dict, sites: list[dict]) -> list[str]:
@@ -262,6 +328,14 @@ def validate_run(payload: dict, sites: list[dict]) -> list[str]:
     for key in ("run_id", "profile_id", "created_at_utc"):
         if not isinstance(payload.get(key), str) or not payload.get(key, "").strip():
             errors.append(f"{key} must be a non-empty string")
+
+    fingerprint = payload.get("fingerprint", {})
+    if fingerprint and not isinstance(fingerprint, dict):
+        errors.append("fingerprint must be an object")
+    elif isinstance(fingerprint, dict):
+        for key in fingerprint:
+            if key not in FINGERPRINT_FIELDS:
+                errors.append(f"fingerprint.{key} is not supported")
 
     run_sites = payload.get("sites")
     if not isinstance(run_sites, list) or not run_sites:
@@ -426,19 +500,27 @@ def sync_run_artifacts(payload: dict) -> int:
                 signals_payload = load_json(signals_path)
                 if signals_payload.get("schema") == SIGNALS_SCHEMA:
                     if isinstance(signals_payload.get("signals"), dict):
-                        run["signals"] = signals_payload["signals"]
+                        non_empty_signals = {
+                            key: value
+                            for key, value in signals_payload["signals"].items()
+                            if value not in ("", None, [], {})
+                        }
+                        if non_empty_signals:
+                            run["signals"] = non_empty_signals
                     result = signals_payload.get("result")
-                    if result in RESULTS:
+                    if result in RESULTS and result != "pending":
                         run["result"] = result
                     summary = signals_payload.get("summary")
-                    if isinstance(summary, str):
+                    if isinstance(summary, str) and summary.strip():
                         run["summary"] = summary
                     checked_at = signals_payload.get("checked_at_utc")
-                    if isinstance(checked_at, str):
+                    if isinstance(checked_at, str) and checked_at.strip():
                         run["checked_at_utc"] = checked_at
             snapshot_path = directory / "snapshot.json"
             if snapshot_path.exists():
                 snapshot_payload = load_json(snapshot_path)
+                run["result"] = "partial"
+                run["summary"] = "cdp_snapshot captured"
                 signals = run.get("signals")
                 if not isinstance(signals, dict):
                     signals = {}
@@ -550,12 +632,12 @@ def cmd_launch_plan(args: argparse.Namespace) -> int:
     if engine == "doke_chromium":
         commands.append(
             "python3 tools/ipc_cli.py probe-engine "
-            f"doke_chromium {shell_quote(browser_path)} {shell_quote(profile_id)} --native-fingerprint"
+            f"doke_chromium {shell_quote(browser_path)} {shell_quote(profile_id)}"
         )
         commands.append(
             "python3 tools/ipc_cli.py start-doke "
             f"{shell_quote(profile_id)} {shell_quote(browser_path)} {shell_quote(data_dir)} "
-            f"{shell_quote(first_url or 'about:blank')} --native-fingerprint"
+            f"{shell_quote(first_url or 'about:blank')}"
         )
     else:
         commands.append(
@@ -726,6 +808,8 @@ def comparable_signal_values(run: dict) -> dict:
     for key, value in signals.items():
         if key == "cdp_snapshot":
             continue
+        if key in VOLATILE_COMPARE_FIELDS:
+            continue
         if value not in ("", None, [], {}):
             out[str(key)] = value
     return out
@@ -893,10 +977,8 @@ def native_features_from_args(args: argparse.Namespace) -> list[str]:
 def update_phase_from_capture(run: dict, capture_ok: bool, summary: str) -> None:
     run["checked_at_utc"] = utc_now()
     if capture_ok:
-        if run.get("result") == "pending":
-            run["result"] = "partial"
-        if not run.get("summary"):
-            run["summary"] = summary
+        run["result"] = "partial"
+        run["summary"] = summary
     else:
         run["result"] = "blocked"
         run["summary"] = summary
@@ -953,18 +1035,24 @@ def cmd_run_capture(args: argparse.Namespace) -> int:
     completed = 0
     try:
         send_ipc(sock, {"type": "hello", "client": "doke_detection_baseline"})
+        drain_ipc(sock)
+        attempted = 0
         for site in payload.get("sites", []):
             for run in site.get("runs", []):
+                if args.only_blocked and run.get("result") not in {"blocked", "pending"}:
+                    continue
+                attempted += 1
                 artifact_dir = path_from_record(str(run.get("artifact_dir", "")))
                 url = str(site.get("url", ""))
                 try:
                     send_ipc(sock, stop_message(payload))
                     try:
-                        wait_profile_status(sock, profile_id, {"stopped", "error"}, args.stop_timeout)
+                        wait_profile_status(sock, profile_id, {"stopped", "error"}, args.stop_timeout, args.verbose_logs)
                     except RuntimeError:
                         pass
+                    drain_ipc(sock)
                     send_ipc(sock, start_message(payload, url, native_features))
-                    status = wait_profile_status(sock, profile_id, {"running", "error", "crashed"}, args.start_timeout)
+                    status = wait_profile_status(sock, profile_id, {"running", "error", "crashed"}, args.start_timeout, args.verbose_logs)
                     if status.get("status") != "running":
                         raise RuntimeError(status.get("error") or status.get("status") or "profile_start_failed")
                     debug_port = int(status.get("debug_port", 0) or 0)
@@ -982,7 +1070,7 @@ def cmd_run_capture(args: argparse.Namespace) -> int:
                 finally:
                     send_ipc(sock, stop_message(payload))
                     try:
-                        wait_profile_status(sock, profile_id, {"stopped", "error"}, args.stop_timeout)
+                        wait_profile_status(sock, profile_id, {"stopped", "error"}, args.stop_timeout, args.verbose_logs)
                     except RuntimeError:
                         pass
     finally:
@@ -994,7 +1082,7 @@ def cmd_run_capture(args: argparse.Namespace) -> int:
     if args.report_output:
         args.report_output.parent.mkdir(parents=True, exist_ok=True)
         args.report_output.write_text(render_report(payload), encoding="utf-8")
-    print(f"detection_run_capture_done run_file={output} captured={completed} phases={len(rows)}")
+    print(f"detection_run_capture_done run_file={output} captured={completed} phases={attempted}")
     return 0
 
 
@@ -1018,6 +1106,8 @@ def cmd_init_pair(args: argparse.Namespace) -> int:
         init_args.notes = args.notes
         init_args.run_id = f"{prefix}-{engine}"
         init_args.site = args.site
+        for key in FINGERPRINT_FIELDS:
+            setattr(init_args, key, getattr(args, key, None))
         payload = make_run(init_args, sites)
         path = output_dir / f"{payload['run_id']}.json"
         write_json(path, payload)
@@ -1086,6 +1176,21 @@ def print_manifest(sites: list[dict], as_json: bool) -> None:
         print(f"{site['id']}\t{site['url']}\t{','.join(site['signals'])}")
 
 
+def add_fingerprint_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--language", default="")
+    parser.add_argument("--user-agent", dest="user_agent", default="")
+    parser.add_argument("--platform", default="")
+    parser.add_argument("--timezone", default="")
+    parser.add_argument("--resolution", default="")
+    parser.add_argument("--hardware-concurrency", dest="hardware_concurrency", type=int, default=0)
+    parser.add_argument("--device-memory-gb", dest="device_memory_gb", type=int, default=0)
+    parser.add_argument("--device-scale-factor", dest="device_scale_factor", type=float, default=0)
+    parser.add_argument("--screen-color-depth", dest="screen_color_depth", type=int, default=0)
+    parser.add_argument("--screen-avail-width", dest="screen_avail_width", type=int, default=0)
+    parser.add_argument("--screen-avail-height", dest="screen_avail_height", type=int, default=0)
+    parser.add_argument("--touch-enabled", dest="touch_enabled", action="store_true")
+
+
 def cmd_init(args: argparse.Namespace) -> int:
     sites = load_sites(args.manifest)
     payload = make_run(args, sites)
@@ -1149,6 +1254,7 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--run-id", default="")
     init.add_argument("--site", action="append", help="Limit to a site id. Can be passed more than once.")
     init.add_argument("--output", type=Path, default=repo_root() / ".tmp" / "detection_baselines")
+    add_fingerprint_args(init)
 
     validate = sub.add_parser("validate", help="Validate a baseline run JSON")
     validate.add_argument("run_file", type=Path)
@@ -1197,6 +1303,8 @@ def build_parser() -> argparse.ArgumentParser:
     run_capture.add_argument("--stop-timeout", type=float, default=5.0)
     run_capture.add_argument("--capture-timeout", type=float, default=15.0)
     run_capture.add_argument("--keep-going", action="store_true")
+    run_capture.add_argument("--only-blocked", action="store_true", help="Capture only pending or blocked phases.")
+    run_capture.add_argument("--verbose-logs", action="store_true", help="Print Agent log.line messages while waiting for profile status.")
     run_capture.add_argument("--dry-run", action="store_true")
 
     init_pair = sub.add_parser("init-pair", help="Create matching system_chrome and doke_chromium baseline runs")
@@ -1207,6 +1315,7 @@ def build_parser() -> argparse.ArgumentParser:
     init_pair.add_argument("--notes", default="")
     init_pair.add_argument("--site", action="append", help="Limit to a site id. Can be passed more than once.")
     init_pair.add_argument("--output-dir", type=Path, default=repo_root() / ".tmp" / "detection_baselines")
+    add_fingerprint_args(init_pair)
 
     compare_pair = sub.add_parser("compare-pair", help="Compare a system/doke baseline pair file")
     compare_pair.add_argument("pair_file", type=Path)

@@ -23,6 +23,9 @@ struct StartRequest {
   int hardwareConcurrency = 0;
   int deviceMemoryGb = 0;
   double deviceScaleFactor = 0;
+  int screenColorDepth = 0;
+  int screenAvailWidth = 0;
+  int screenAvailHeight = 0;
   QString timezone;
   QString resolution;
   bool touchEnabled = false;
