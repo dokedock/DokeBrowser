@@ -27,7 +27,7 @@ def extract_probe_json_literal(text):
     collecting = False
     parts = []
     for line in text.splitlines():
-        if "std::fputs(" in line:
+        if "std::fprintf(stdout" in line:
             collecting = True
             continue
         if not collecting:
@@ -50,7 +50,7 @@ def check_patch(path):
 
     if "chrome/app/chrome_main.cc" not in text:
         errors.append("patch must touch chrome/app/chrome_main.cc")
-    if "std::fputs(" not in text:
+    if "std::fprintf(stdout" not in text:
         errors.append("patch should emit probe JSON without starting Chromium")
     if "return doke_probe_result;" not in text:
         errors.append("patch should return immediately after probe output")

@@ -44,7 +44,7 @@ public:
 
   static ResolveResult resolve();
   static ResolveResult resolve(const QString& engineConfigJson);
-  static ProbeResult probe(const QString& engineConfigJson, int probeTimeoutMs = 1500);
+  static ProbeResult probe(const QString& engineConfigJson, int probeTimeoutMs = 12000);
   static QString resolveExecutable();
   static QString resolveExecutable(const QString& engineConfigJson);
   static Config parseConfig(const QString& engineConfigJson);

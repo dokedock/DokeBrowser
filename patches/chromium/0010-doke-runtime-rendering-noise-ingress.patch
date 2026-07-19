@@ -16,15 +16,16 @@ diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
  
  void AppendStringSwitchIfAbsent(base::CommandLine& command_line,
                                  const char* switch_name,
-@@ -60,6 +63,21 @@ void AppendStringSwitchIfAbsent(base::CommandLine& command_line,
-   command_line.AppendSwitchASCII(switch_name, *value);
+@@ -141,7 +144,22 @@ void MaybeApplyDokeUaClientHints(base::CommandLine& command_line,
+   AppendDokeBoolSwitchIfAbsent(command_line, kDokeUaChMobileSwitch, *hints,
+                                "mobile");
  }
  
 +void AppendRenderingNoiseSwitchIfAbsent(base::CommandLine& command_line,
-+                                        const base::Value::Dict& rendering,
++                                        const base::DictValue& rendering,
 +                                        const char* section_name,
 +                                        const char* switch_name) {
-+  const base::Value::Dict* section = rendering.FindDict(section_name);
++  const base::DictValue* section = rendering.FindDict(section_name);
 +  if (!section) {
 +    return;
 +  }
@@ -35,20 +36,20 @@ diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
 +  AppendStringSwitchIfAbsent(command_line, switch_name, *section, "seed");
 +}
 +
- void MaybeLogDokeUaClientHints(const base::Value::Dict& fingerprint) {
-   const base::Value::Dict* hints = fingerprint.FindDict(kDokeUaClientHintsKey);
-   if (!hints) {
-@@ -150,6 +168,13 @@ void MaybeLoadDokeRuntimeConfig(base::CommandLine& command_line) {
-     MaybeLogDokeUaClientHints(*fingerprint);
+ int MaybeRunDokeProbe(const base::CommandLine& command_line) {
+   if (!command_line.HasSwitch(kDokeProbeSwitch)) {
+     return -1;
+@@ -253,6 +271,13 @@ void MaybeLoadDokeRuntimeConfig(base::CommandLine& command_line) {
+     MaybeApplyDokeUaClientHints(command_line, *fingerprint);
    }
  
-+  const base::Value::Dict* rendering = root.FindDict("rendering");
++  const base::DictValue* rendering = root.FindDict("rendering");
 +  if (rendering) {
 +    AppendRenderingNoiseSwitchIfAbsent(command_line, *rendering, "canvas", kDokeCanvasNoiseSeedSwitch);
 +    AppendRenderingNoiseSwitchIfAbsent(command_line, *rendering, "webgl", kDokeWebglNoiseSeedSwitch);
 +    AppendRenderingNoiseSwitchIfAbsent(command_line, *rendering, "audio", kDokeAudioNoiseSeedSwitch);
 +  }
 +
-   const base::Value::Dict* webrtc = root.FindDict("webrtc");
+   const base::DictValue* webrtc = root.FindDict("webrtc");
    if (webrtc) {
      AppendStringSwitchIfAbsent(command_line, kDokeWebRtcIpHandlingPolicySwitch, *webrtc, "ip_handling_policy");

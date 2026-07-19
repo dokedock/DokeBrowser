@@ -101,7 +101,12 @@ def first_line(text):
 def main():
     parser = argparse.ArgumentParser(description="Validate a Doke Chromium --doke-probe implementation.")
     parser.add_argument("executable", help="Path to doke_chromium")
-    parser.add_argument("--timeout", type=float, default=2.0, help="Probe timeout in seconds")
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=12.0,
+        help="Probe timeout in seconds. Real Chromium cold starts can take several seconds on macOS.",
+    )
     parser.add_argument(
         "--require-capability",
         action="append",

@@ -6,19 +6,18 @@ Doke-Rollback: Remove this patch from patches/chromium/series and rebuild Chromi
 diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
 --- a/chrome/app/chrome_main.cc
 +++ b/chrome/app/chrome_main.cc
-@@ -72,6 +72,7 @@ constexpr char kDokeRuntimeConfigSwitch[] = "doke-runtime-config";
- constexpr char kDokeRuntimeSchema[] = "doke_profile_runtime.v1";
- constexpr char kDokeUserAgentSwitch[] = "user-agent";
- constexpr char kDokeLanguageSwitch[] = "lang";
+@@ -72,5 +72,6 @@ constexpr char kDokeUaChModelSwitch[] = "doke-ua-ch-model";
+ constexpr char kDokeUaChBitnessSwitch[] = "doke-ua-ch-bitness";
+ constexpr char kDokeUaChMobileSwitch[] = "doke-ua-ch-mobile";
 +constexpr char kDokeWebRtcIpHandlingPolicySwitch[] = "force-webrtc-ip-handling-policy";
  
  void AppendStringSwitchIfAbsent(base::CommandLine& command_line,
                                  const char* switch_name,
-@@ -173,6 +174,11 @@ void MaybeLoadDokeRuntimeConfig(base::CommandLine& command_line) {
-     MaybeLogDokeUaClientHints(*fingerprint);
+@@ -251,6 +252,11 @@ void MaybeLoadDokeRuntimeConfig(base::CommandLine& command_line) {
+     MaybeApplyDokeUaClientHints(command_line, *fingerprint);
    }
  
-+  const base::Value::Dict* webrtc = root.FindDict("webrtc");
++  const base::DictValue* webrtc = root.FindDict("webrtc");
 +  if (webrtc) {
 +    AppendStringSwitchIfAbsent(command_line, kDokeWebRtcIpHandlingPolicySwitch, *webrtc, "ip_handling_policy");
 +  }

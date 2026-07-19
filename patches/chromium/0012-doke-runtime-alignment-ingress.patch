@@ -21,23 +21,23 @@ diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
  
  void AppendStringSwitchIfAbsent(base::CommandLine& command_line,
                                  const char* switch_name,
-@@ -110,6 +118,26 @@ void AppendSurfaceSeedSwitchIfAbsent(base::CommandLine& command_line,
+@@ -191,6 +199,26 @@ void AppendSurfaceSeedSwitchIfAbsent(base::CommandLine& command_line,
    AppendStringSwitchIfAbsent(command_line, switch_name, *section, "seed");
  }
  
 +void AppendAlignmentSwitchesIfAbsent(base::CommandLine& command_line,
-+                                     const base::Value::Dict& alignment) {
++                                     const base::DictValue& alignment) {
 +  AppendStringSwitchIfAbsent(command_line, kDokeAlignmentLanguageSwitch, alignment, "language");
 +  AppendStringSwitchIfAbsent(command_line, kDokeTimezoneIdSwitch, alignment, "timezone");
 +
-+  const base::Value::Dict* geo = alignment.FindDict("geo");
++  const base::DictValue* geo = alignment.FindDict("geo");
 +  if (geo) {
 +    AppendStringSwitchIfAbsent(command_line, kDokeGeoLatitudeSwitch, *geo, "latitude_arg");
 +    AppendStringSwitchIfAbsent(command_line, kDokeGeoLongitudeSwitch, *geo, "longitude_arg");
 +    AppendStringSwitchIfAbsent(command_line, kDokeGeoAccuracySwitch, *geo, "accuracy_arg");
 +  }
 +
-+  const base::Value::Dict* proxy = alignment.FindDict("proxy");
++  const base::DictValue* proxy = alignment.FindDict("proxy");
 +  if (proxy) {
 +    AppendStringSwitchIfAbsent(command_line, kDokeProxySchemeSwitch, *proxy, "scheme");
 +    AppendStringSwitchIfAbsent(command_line, kDokeProxyHostSwitch, *proxy, "host");
@@ -45,18 +45,18 @@ diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
 +  }
 +}
 +
- void MaybeLogDokeUaClientHints(const base::Value::Dict& fingerprint) {
-   const base::Value::Dict* hints = fingerprint.FindDict(kDokeUaClientHintsKey);
-   if (!hints) {
+ int MaybeRunDokeProbe(const base::CommandLine& command_line) {
+   if (!command_line.HasSwitch(kDokeProbeSwitch)) {
+     return -1;
 @@ -217,6 +245,11 @@ void MaybeLoadDokeRuntimeConfig(base::CommandLine& command_line) {
      AppendSurfaceSeedSwitchIfAbsent(command_line, *surfaces, "client_rects", kDokeClientRectsSeedSwitch);
    }
  
-+  const base::Value::Dict* alignment = root.FindDict("alignment");
++  const base::DictValue* alignment = root.FindDict("alignment");
 +  if (alignment) {
 +    AppendAlignmentSwitchesIfAbsent(command_line, *alignment);
 +  }
 +
-   const base::Value::Dict* webrtc = root.FindDict("webrtc");
+   const base::DictValue* webrtc = root.FindDict("webrtc");
    if (webrtc) {
      AppendStringSwitchIfAbsent(command_line, kDokeWebRtcIpHandlingPolicySwitch, *webrtc, "ip_handling_policy");

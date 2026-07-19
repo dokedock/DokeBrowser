@@ -112,7 +112,32 @@ def engine_config(executable="", extra_args=None, native=False, features=None):
     return json.dumps(cfg, separators=(",", ":"))
 
 
+def print_help():
+    print(
+        "\n".join(
+            [
+                "usage: python3 tools/ipc_cli.py [command] [args...]",
+                "",
+                "Commands:",
+                "  hello",
+                "  engine-list",
+                "  probe-engine [engine] [executable] [profile_id] [--native|--native-fingerprint|--native-proxy|--native-geoip|--native-humanize]",
+                "  start-doke [profile_id] [executable] [data_dir] [url] [extra_args...]",
+                "  start [profile_id] [data_dir] [url] [language] [timezone] [resolution] [touch] [ua] [platform] [hardware] [memory] [scale] [geo] [lat] [lon] [accuracy]",
+                "  stop [profile_id]",
+                "  proxy-test [profile_id] [proxy_url]",
+                "",
+                "The CLI connects to the local dokebrowser_agent IPC socket for all commands except --help.",
+            ]
+        )
+    )
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] in ("--help", "-h", "help"):
+        print_help()
+        return
+
     sp = sock_path()
     cmd = sys.argv[1] if len(sys.argv) > 1 else "hello"
 
@@ -144,7 +169,7 @@ def main():
                 "engine_config_json": engine_config(executable, features=features),
             },
         )
-        read_loop(s, 2.0)
+        read_loop(s, 15.0)
         return
 
     if cmd == "start-doke":
@@ -166,7 +191,7 @@ def main():
                 "engine_config_json": engine_config(executable, extra_args, features=features),
             },
         )
-        read_loop(s, 8.0)
+        read_loop(s, 15.0)
         return
 
     if cmd == "start":

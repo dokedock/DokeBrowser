@@ -6,12 +6,10 @@ Doke-Rollback: Remove this patch from patches/chromium/series and rebuild Chromi
 diff --git a/components/embedder_support/user_agent_utils.cc b/components/embedder_support/user_agent_utils.cc
 --- a/components/embedder_support/user_agent_utils.cc
 +++ b/components/embedder_support/user_agent_utils.cc
-@@ -18,13 +18,17 @@
+@@ -18,13 +18,15 @@
  #include "base/command_line.h"
  #include "base/compiler_specific.h"
  #include "base/feature_list.h"
-+#include "base/files/file_path.h"
-+#include "base/files/file_util.h"
 +#include "base/json/json_reader.h"
  #include "base/logging.h"
  #include "base/no_destructor.h"
@@ -24,24 +22,36 @@ diff --git a/components/embedder_support/user_agent_utils.cc b/components/embedd
  #include "base/version.h"
  #include "build/branding_buildflags.h"
  #include "build/build_config.h"
-@@ -53,8 +57,105 @@ namespace embedder_support {
+@@ -53,8 +57,97 @@ namespace embedder_support {
  namespace {
  
 +
-+constexpr char kDokeRuntimeConfigSwitch[] = "doke-runtime-config";
-+constexpr char kDokeRuntimeSchema[] = "doke_profile_runtime.v1";
++constexpr char kDokeUaChBrandsSwitch[] = "doke-ua-ch-brands";
++constexpr char kDokeUaChFullVersionListSwitch[] = "doke-ua-ch-full-version-list";
++constexpr char kDokeUaChFullVersionSwitch[] = "doke-ua-ch-full-version";
++constexpr char kDokeUaChPlatformSwitch[] = "doke-ua-ch-platform";
++constexpr char kDokeUaChPlatformVersionSwitch[] = "doke-ua-ch-platform-version";
++constexpr char kDokeUaChArchitectureSwitch[] = "doke-ua-ch-architecture";
++constexpr char kDokeUaChModelSwitch[] = "doke-ua-ch-model";
++constexpr char kDokeUaChBitnessSwitch[] = "doke-ua-ch-bitness";
++constexpr char kDokeUaChMobileSwitch[] = "doke-ua-ch-mobile";
 +
-+bool ReadDokeBrandList(const base::Value::Dict& hints,
-+                       const char* key,
-+                       blink::UserAgentBrandList* out) {
-+  const base::Value::List* values = hints.FindList(key);
-+  if (!values || values->empty()) {
++bool ReadDokeBrandListSwitch(const base::CommandLine& command_line,
++                             const char* switch_name,
++                             blink::UserAgentBrandList* out) {
++  if (!command_line.HasSwitch(switch_name)) {
++    return false;
++  }
++
++  std::optional<base::ListValue> parsed = base::JSONReader::ReadList(
++      command_line.GetSwitchValueASCII(switch_name), base::JSON_PARSE_RFC);
++  if (!parsed) {
 +    return false;
 +  }
 +
 +  blink::UserAgentBrandList brands;
-+  for (const base::Value& value : *values) {
-+    const base::Value::Dict* item = value.GetIfDict();
++  for (const base::Value& value : *parsed) {
++    const base::DictValue* item = value.GetIfDict();
 +    if (!item) {
 +      return false;
 +    }
@@ -53,72 +63,52 @@ diff --git a/components/embedder_support/user_agent_utils.cc b/components/embedd
 +    brands.emplace_back(*brand, *version);
 +  }
 +
++  if (brands.empty()) {
++    return false;
++  }
 +  *out = std::move(brands);
 +  return true;
 +}
 +
++bool IsDokeBoolSwitchEnabled(const base::CommandLine& command_line,
++                             const char* switch_name) {
++  const std::string value = command_line.GetSwitchValueASCII(switch_name);
++  return value == "true" || value == "1" || value == "yes";
++}
++
 +std::optional<blink::UserAgentMetadata> GetDokeUserAgentMetadataOverride() {
 +  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-+  if (!command_line->HasSwitch(kDokeRuntimeConfigSwitch)) {
-+    return std::nullopt;
-+  }
-+
-+  const base::FilePath config_path =
-+      command_line->GetSwitchValuePath(kDokeRuntimeConfigSwitch);
-+  if (config_path.empty()) {
-+    return std::nullopt;
-+  }
-+
-+  std::string contents;
-+  if (!base::ReadFileToString(config_path, &contents)) {
-+    return std::nullopt;
-+  }
-+
-+  std::optional<base::Value> parsed = base::JSONReader::Read(contents);
-+  if (!parsed || !parsed->is_dict()) {
-+    return std::nullopt;
-+  }
-+
-+  const base::Value::Dict& root = parsed->GetDict();
-+  const std::string* schema = root.FindString("schema");
-+  if (!schema || *schema != kDokeRuntimeSchema) {
-+    return std::nullopt;
-+  }
-+
-+  const base::Value::Dict* fingerprint = root.FindDict("fingerprint");
-+  if (!fingerprint) {
-+    return std::nullopt;
-+  }
-+  const base::Value::Dict* hints = fingerprint->FindDict("ua_client_hints");
-+  if (!hints) {
++  if (!command_line->HasSwitch(kDokeUaChBrandsSwitch) ||
++      !command_line->HasSwitch(kDokeUaChFullVersionListSwitch)) {
 +    return std::nullopt;
 +  }
 +
 +  blink::UserAgentMetadata metadata;
-+  if (!ReadDokeBrandList(*hints, "brands", &metadata.brand_version_list) ||
-+      !ReadDokeBrandList(*hints, "fullVersionList",
-+                         &metadata.brand_full_version_list)) {
++  if (!ReadDokeBrandListSwitch(*command_line, kDokeUaChBrandsSwitch,
++                               &metadata.brand_version_list) ||
++      !ReadDokeBrandListSwitch(*command_line, kDokeUaChFullVersionListSwitch,
++                               &metadata.brand_full_version_list)) {
 +    return std::nullopt;
 +  }
 +
-+  const std::string* full_version = hints->FindString("fullVersion");
-+  const std::string* platform = hints->FindString("platform");
-+  if (!full_version || full_version->empty() || !platform || platform->empty()) {
++  const std::string full_version =
++      command_line->GetSwitchValueASCII(kDokeUaChFullVersionSwitch);
++  const std::string platform =
++      command_line->GetSwitchValueASCII(kDokeUaChPlatformSwitch);
++  if (full_version.empty() || platform.empty()) {
 +    return std::nullopt;
 +  }
 +
-+  const std::string* platform_version = hints->FindString("platformVersion");
-+  const std::string* architecture = hints->FindString("architecture");
-+  const std::string* model = hints->FindString("model");
-+  const std::string* bitness = hints->FindString("bitness");
-+
-+  metadata.full_version = *full_version;
-+  metadata.platform = *platform;
-+  metadata.platform_version = platform_version ? *platform_version : "";
-+  metadata.architecture = architecture ? *architecture : "";
-+  metadata.model = model ? *model : "";
-+  metadata.bitness = bitness ? *bitness : "";
-+  metadata.mobile = hints->FindBool("mobile").value_or(false);
++  metadata.full_version = full_version;
++  metadata.platform = platform;
++  metadata.platform_version =
++      command_line->GetSwitchValueASCII(kDokeUaChPlatformVersionSwitch);
++  metadata.architecture =
++      command_line->GetSwitchValueASCII(kDokeUaChArchitectureSwitch);
++  metadata.model = command_line->GetSwitchValueASCII(kDokeUaChModelSwitch);
++  metadata.bitness = command_line->GetSwitchValueASCII(kDokeUaChBitnessSwitch);
++  metadata.mobile =
++      IsDokeBoolSwitchEnabled(*command_line, kDokeUaChMobileSwitch);
 +  metadata.form_factors = {
 +      metadata.mobile ? blink::kMobileFormFactor : blink::kDesktopFormFactor};
 +  return metadata;

@@ -11,7 +11,7 @@ This document defines the minimum native handshake a self-developed `doke_chromi
 The command must:
 
 - Exit with code `0`.
-- Finish quickly. The Agent currently uses a short timeout.
+- Finish within the Agent probe timeout. The current default is 12 seconds to allow real Chromium cold starts on macOS.
 - Print one JSON object to stdout or stderr. Extra log lines before or after the JSON object are tolerated, but the JSON object should stay compact.
 
 ## JSON Schema
@@ -45,9 +45,9 @@ The first Chromium patch, `patches/chromium/0001-doke-probe-contract.patch`, int
 
 `patches/chromium/0003-doke-runtime-ua-lang-switches.patch` starts the native UA path by applying runtime `fingerprint.user_agent` and `fingerprint.language` as Chrome command-line switches when those switches are absent. This is not enough to report `native_fingerprint`; UA-CH and JavaScript-visible metadata still need dedicated patches.
 
-`Doke/runtime.json` also includes `fingerprint.ua_client_hints` when the Profile UA can be parsed. `patches/chromium/0004-doke-runtime-ua-client-hints-ingress.patch` reads and validates this metadata, but still does not report `native_fingerprint` until the values are wired into Chromium's network and JavaScript-visible UA-CH surfaces.
+`Doke/runtime.json` also includes `fingerprint.ua_client_hints` when the Profile UA can be parsed. `patches/chromium/0004-doke-runtime-ua-client-hints-ingress.patch` reads and validates this metadata during startup, then bridges it into Doke UA-CH command-line switches. It still does not report `native_fingerprint` until the values pass the detection baseline.
 
-`patches/chromium/0005-doke-runtime-ua-client-hints-override.patch` overrides Chromium's `GetUserAgentMetadata()` from that structured metadata. It is intended to affect UA-CH surfaces, but `native_fingerprint` still remains off until a real Doke Chromium build is validated against BrowserScan/deviceandbrowserinfo.
+`patches/chromium/0005-doke-runtime-ua-client-hints-override.patch` overrides Chromium's `GetUserAgentMetadata()` from those Doke UA-CH switches. This avoids blocking file reads from the UA utility path while still affecting UA-CH surfaces.
 
 `Doke/runtime.json` includes `webrtc.ip_handling_policy`; `patches/chromium/0006-doke-runtime-webrtc-policy.patch` applies it as `--force-webrtc-ip-handling-policy` when absent. This is the first WebRTC native step, but it should not be treated as a full WebRTC leak fix until real ICE candidate checks pass.
 

@@ -14,7 +14,7 @@ diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
  
  #include <iostream>
  #include <memory>
-@@ -58,6 +59,21 @@ std::optional<base::CommandLine>& GetInitialCommandLineStorage() {
+@@ -58,6 +59,20 @@ std::optional<base::CommandLine>& GetInitialCommandLineStorage() {
    return *initial_command_line;
  }
  
@@ -25,10 +25,9 @@ diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
 +    return -1;
 +  }
 +
-+  std::fputs(
-+      "{\"probe_protocol\":1,\"version\":\"Doke Chromium "
-+      "0.1.0\",\"capabilities\":[]}\n",
-+      stdout);
++  std::fprintf(stdout, "%s",
++               "{\"probe_protocol\":1,\"version\":\"Doke Chromium "
++               "0.1.0\",\"capabilities\":[]}\n");
 +  std::fflush(stdout);
 +  return 0;
 +}
@@ -36,7 +35,7 @@ diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
  }  // namespace
  
  const base::CommandLine& GetInitialBrowserCommandLine() {
-@@ -145,7 +160,12 @@ int ChromeMain(int argc, const char** argv) {
+@@ -145,5 +160,10 @@ int ChromeMain(int argc, const char** argv) {
    base::CommandLine::Init(0, nullptr);
  
    base::CommandLine* command_line(base::CommandLine::ForCurrentProcess());

@@ -18,13 +18,13 @@ diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
  
  void AppendStringSwitchIfAbsent(base::CommandLine& command_line,
                                  const char* switch_name,
-@@ -138,6 +143,29 @@ void AppendAlignmentSwitchesIfAbsent(base::CommandLine& command_line,
+@@ -219,6 +224,29 @@ void AppendAlignmentSwitchesIfAbsent(base::CommandLine& command_line,
    }
  }
  
 +void AppendBoolSwitchIfAbsent(base::CommandLine& command_line,
 +                              const char* switch_name,
-+                              const base::Value::Dict& dict,
++                              const base::DictValue& dict,
 +                              const char* key) {
 +  if (command_line.HasSwitch(switch_name)) {
 +    return;
@@ -37,7 +37,7 @@ diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
 +}
 +
 +void AppendAutomationSwitchesIfAbsent(base::CommandLine& command_line,
-+                                      const base::Value::Dict& automation) {
++                                      const base::DictValue& automation) {
 +  AppendStringSwitchIfAbsent(command_line, kDokeWebdriverPolicySwitch, automation, "webdriver_policy");
 +  AppendStringSwitchIfAbsent(command_line, kDokeDevtoolsExposureSwitch, automation, "devtools_exposure");
 +  AppendBoolSwitchIfAbsent(command_line, kDokeCdpSideEffectGuardSwitch, automation, "cdp_side_effect_guard");
@@ -45,18 +45,18 @@ diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
 +  AppendBoolSwitchIfAbsent(command_line, kDokeStartupAutomationControlledSwitch, automation, "startup_automation_controlled");
 +}
 +
- void MaybeLogDokeUaClientHints(const base::Value::Dict& fingerprint) {
-   const base::Value::Dict* hints = fingerprint.FindDict(kDokeUaClientHintsKey);
-   if (!hints) {
+ int MaybeRunDokeProbe(const base::CommandLine& command_line) {
+   if (!command_line.HasSwitch(kDokeProbeSwitch)) {
+     return -1;
 @@ -250,6 +278,11 @@ void MaybeLoadDokeRuntimeConfig(base::CommandLine& command_line) {
      AppendAlignmentSwitchesIfAbsent(command_line, *alignment);
    }
  
-+  const base::Value::Dict* automation = root.FindDict("automation");
++  const base::DictValue* automation = root.FindDict("automation");
 +  if (automation) {
 +    AppendAutomationSwitchesIfAbsent(command_line, *automation);
 +  }
 +
-   const base::Value::Dict* webrtc = root.FindDict("webrtc");
+   const base::DictValue* webrtc = root.FindDict("webrtc");
    if (webrtc) {
      AppendStringSwitchIfAbsent(command_line, kDokeWebRtcIpHandlingPolicySwitch, *webrtc, "ip_handling_policy");

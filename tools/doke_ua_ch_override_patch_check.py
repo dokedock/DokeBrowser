@@ -9,7 +9,10 @@ REQUIRED_TOKENS = [
     "components/embedder_support/user_agent_utils.cc",
     "GetDokeUserAgentMetadataOverride",
     "blink::UserAgentMetadata",
-    "ReadDokeBrandList",
+    "ReadDokeBrandListSwitch",
+    "doke-ua-ch-brands",
+    "doke-ua-ch-full-version-list",
+    "GetSwitchValueASCII",
     "brand_version_list",
     "brand_full_version_list",
     "full_version",
@@ -32,8 +35,10 @@ def check_patch(path):
             errors.append(f"missing token: {token}")
     if "native_fingerprint" in text:
         errors.append("UA-CH override patch must not claim native_fingerprint capability")
-    if "base::JSONReader::Read" not in text or "base::ReadFileToString" not in text:
-        errors.append("patch must read and parse Doke/runtime.json")
+    if "base::JSONReader::ReadList" not in text:
+        errors.append("patch must parse UA-CH brand list switches")
+    if "base::ReadFileToString" in text or "GetSwitchValuePath" in text:
+        errors.append("UA-CH override must not read Doke/runtime.json from user_agent_utils")
     if "only_low_entropy_ch" not in text:
         errors.append("patch must preserve low-entropy-only behavior")
     if "#if BUILDFLAG(IS_WIN)\n+constexpr char kDokeRuntimeConfigSwitch" in text:

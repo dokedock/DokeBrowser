@@ -19,15 +19,15 @@ diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
  
  void AppendStringSwitchIfAbsent(base::CommandLine& command_line,
                                  const char* switch_name,
-@@ -78,6 +84,32 @@ void AppendRenderingNoiseSwitchIfAbsent(base::CommandLine& command_line,
+@@ -159,6 +165,32 @@ void AppendRenderingNoiseSwitchIfAbsent(base::CommandLine& command_line,
    AppendStringSwitchIfAbsent(command_line, switch_name, *section, "seed");
  }
  
 +void AppendPlatformPresetSwitchIfAbsent(base::CommandLine& command_line,
-+                                        const base::Value::Dict& surfaces,
++                                        const base::DictValue& surfaces,
 +                                        const char* section_name,
 +                                        const char* switch_name) {
-+  const base::Value::Dict* section = surfaces.FindDict(section_name);
++  const base::DictValue* section = surfaces.FindDict(section_name);
 +  if (!section) {
 +    return;
 +  }
@@ -39,24 +39,24 @@ diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
 +}
 +
 +void AppendSurfaceSeedSwitchIfAbsent(base::CommandLine& command_line,
-+                                     const base::Value::Dict& surfaces,
++                                     const base::DictValue& surfaces,
 +                                     const char* section_name,
 +                                     const char* switch_name) {
-+  const base::Value::Dict* section = surfaces.FindDict(section_name);
++  const base::DictValue* section = surfaces.FindDict(section_name);
 +  if (!section) {
 +    return;
 +  }
 +  AppendStringSwitchIfAbsent(command_line, switch_name, *section, "seed");
 +}
 +
- void MaybeLogDokeUaClientHints(const base::Value::Dict& fingerprint) {
-   const base::Value::Dict* hints = fingerprint.FindDict(kDokeUaClientHintsKey);
-   if (!hints) {
+ int MaybeRunDokeProbe(const base::CommandLine& command_line) {
+   if (!command_line.HasSwitch(kDokeProbeSwitch)) {
+     return -1;
 @@ -175,6 +207,16 @@ void MaybeLoadDokeRuntimeConfig(base::CommandLine& command_line) {
      AppendRenderingNoiseSwitchIfAbsent(command_line, *rendering, "audio", kDokeAudioNoiseSeedSwitch);
    }
  
-+  const base::Value::Dict* surfaces = root.FindDict("surfaces");
++  const base::DictValue* surfaces = root.FindDict("surfaces");
 +  if (surfaces) {
 +    AppendPlatformPresetSwitchIfAbsent(command_line, *surfaces, "plugins", kDokePluginsPresetSwitch);
 +    AppendPlatformPresetSwitchIfAbsent(command_line, *surfaces, "mime_types", kDokeMimeTypesPresetSwitch);
@@ -66,6 +66,6 @@ diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
 +    AppendSurfaceSeedSwitchIfAbsent(command_line, *surfaces, "client_rects", kDokeClientRectsSeedSwitch);
 +  }
 +
-   const base::Value::Dict* webrtc = root.FindDict("webrtc");
+   const base::DictValue* webrtc = root.FindDict("webrtc");
    if (webrtc) {
      AppendStringSwitchIfAbsent(command_line, kDokeWebRtcIpHandlingPolicySwitch, *webrtc, "ip_handling_policy");

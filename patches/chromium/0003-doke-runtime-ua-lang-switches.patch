@@ -15,7 +15,7 @@ diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
 +
 +void AppendStringSwitchIfAbsent(base::CommandLine& command_line,
 +                                const char* switch_name,
-+                                const base::Value::Dict& dict,
++                                const base::DictValue& dict,
 +                                const char* key) {
 +  if (command_line.HasSwitch(switch_name)) {
 +    return;
@@ -44,7 +44,7 @@ diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
      return;
    }
  
-+  const base::Value::Dict* fingerprint = root.FindDict("fingerprint");
++  const base::DictValue* fingerprint = root.FindDict("fingerprint");
 +  if (fingerprint) {
 +    AppendStringSwitchIfAbsent(command_line, kDokeUserAgentSwitch, *fingerprint, "user_agent");
 +    AppendStringSwitchIfAbsent(command_line, kDokeLanguageSwitch, *fingerprint, "language");

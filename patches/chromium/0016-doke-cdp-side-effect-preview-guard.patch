@@ -34,9 +34,9 @@ diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
 +  environment->SetVar(kDokeCdpSideEffectGuardEnv, "1");
 +}
 +
- void MaybeLogDokeUaClientHints(const base::Value::Dict& fingerprint) {
-   const base::Value::Dict* hints = fingerprint.FindDict(kDokeUaClientHintsKey);
-   if (!hints) {
+ int MaybeRunDokeProbe(const base::CommandLine& command_line) {
+   if (!command_line.HasSwitch(kDokeProbeSwitch)) {
+     return -1;
 @@ -474,6 +490,7 @@ int ChromeMain(int argc, const char** argv) {
    }
  

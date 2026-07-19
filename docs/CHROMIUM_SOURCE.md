@@ -199,14 +199,14 @@ The script expects Chromium build tooling to already exist in the source checkou
 
 ## Current macOS Build Note
 
-Status as of 2026-07-18:
+Status as of 2026-07-19:
 
 - Local Chromium checkout is ready at `third_party/chromium/src`, HEAD `534c1497c1`.
 - Doke patch queue `0001` through `0016` has been applied/recognized in the real checkout.
 - Full Xcode is selected from `/Applications/Xcode.app/Contents/Developer`; `xcodebuild -version` reports `Xcode 26.6` / `Build version 17F113`.
 - Host prerequisite check passes with `chromium_build_prereq_ok platform=mac`.
-- Official Metal-enabled build is still blocked because the Apple MetalToolchain component is not installed. `xcrun metal --version` reports the missing Metal Toolchain, and `xcodebuild -downloadComponent MetalToolchain` currently fails to fetch a matching Apple MobileAsset catalog for the observed build versions.
-- Temporary validation uses `out/Doke/args.gn` with:
+- Official full Metal/ANGLE Metal release builds are still blocked because the Apple MetalToolchain component is not installed. `xcrun metal --version` reports the missing Metal Toolchain, and `xcodebuild -downloadComponent MetalToolchain` currently fails to fetch a matching Apple MobileAsset catalog for the observed build versions.
+- First deliverable validation uses `out/Doke/args.gn` with:
 
 ```gn
 is_debug = false
@@ -214,10 +214,10 @@ is_component_build = false
 symbol_level = 1
 blink_symbol_level = 0
 angle_enable_metal = false
-dawn_enable_metal = false
+dawn_enable_metal = true
 ```
 
-This no-Metal configuration is only for validating Doke patch compile/link progress on the current machine. It is not the final macOS GPU/release configuration.
+This disables ANGLE Metal to avoid the missing Apple MetalToolchain path while keeping Dawn Metal enabled, which is required by macOS GPU/WebGPU linkage. It is the current local deliverable configuration, not the final full Metal/ANGLE Metal release configuration.
 
 Known local generated/restored files needed by this checkout:
 
@@ -225,16 +225,32 @@ Known local generated/restored files needed by this checkout:
 - `build/util/LASTCHANGE.committime`
 - `gpu/webgpu/DAWN_VERSION`
 - `gpu/webgpu/dawn_commit_hash.h`
+- `gpu/config/gpu_lists_version.h`
 - `third_party/devtools-frontend/src/node_modules/@rollup/rollup-darwin-arm64`
 
-Latest observed build progress:
+Latest successful build:
 
 ```text
 bash tools/build_doke_chromium.sh
-[12060/45799] ACTION //third_party/blink/renderer/core:make_core_generated_css_property_names(...)
+Built target 'chrome' in /Users/mac/Documents/浏览器/third_party/chromium/src/out/Doke
 ```
 
-No new compile error was observed by that point, but the final `Chromium.app` handoff and `--doke-probe` verification have not completed yet.
+First deliverable artifacts:
+
+- App bundle: `third_party/chromium/src/out/Doke/Chromium.app`
+- Executable: `third_party/chromium/src/out/Doke/Chromium.app/Contents/MacOS/Chromium`
+
+Verified commands:
+
+```bash
+python3 tools/doke_probe_check.py /Users/mac/Documents/浏览器/third_party/chromium/src/out/Doke/Chromium.app/Contents/MacOS/Chromium
+python3 tools/ipc_cli.py probe-engine doke_chromium /Users/mac/Documents/浏览器/third_party/chromium/src/out/Doke/Chromium.app/Contents/MacOS/Chromium real-doke-final-probe
+python3 tools/ipc_cli.py start-doke real-doke-final-start /Users/mac/Documents/浏览器/third_party/chromium/src/out/Doke/Chromium.app/Contents/MacOS/Chromium /private/tmp/doke_real_profile_final about:blank --headless=new --disable-gpu --no-sandbox
+python3 tools/doke_runtime_check.py /private/tmp/doke_real_profile_final/Doke/runtime.json
+python3 tools/ipc_cli.py stop real-doke-final-start
+```
+
+The final `profile.start` reached `running`, wrote `Doke/runtime.json`, and stopped cleanly. Validate `Doke/runtime.json` while the Profile is running; `profile.stop` may remove runtime-only files as part of resource cleanup. The earlier `GetUserAgentMetadata()` blocking DCHECK was fixed by moving UA-CH runtime ingestion to startup-time Doke switches instead of reading `Doke/runtime.json` from `components/embedder_support/user_agent_utils.cc`.
 
 ## Binary Handoff
 
@@ -248,7 +264,7 @@ or set `engine_config_json.executable` from the UI Doke path selector. Explicit 
 
 Use the UI "Detect" button or IPC `engine.probe` to verify the path before launching a Profile.
 Probe failures return one of `doke_chromium_not_found`, `doke_chromium_path_missing`, `doke_chromium_path_not_file`, or `doke_chromium_path_not_executable`.
-Successful probes first run `doke_chromium --doke-probe` with a short timeout. A native Doke Chromium binary should return JSON:
+Successful probes first run `doke_chromium --doke-probe` with the Agent probe timeout. The current default is 12 seconds to allow real Chromium cold starts on macOS. A native Doke Chromium binary should return JSON:
 
 ```json
 {

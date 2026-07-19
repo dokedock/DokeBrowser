@@ -6,9 +6,7 @@ Doke-Rollback: Remove this patch from patches/chromium/series and rebuild Chromi
 diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
 --- a/chrome/app/chrome_main.cc
 +++ b/chrome/app/chrome_main.cc
-@@ -73,6 +73,9 @@ constexpr char kDokeRuntimeSchema[] = "doke_profile_runtime.v1";
- constexpr char kDokeUserAgentSwitch[] = "user-agent";
- constexpr char kDokeLanguageSwitch[] = "lang";
+@@ -73,4 +73,7 @@ constexpr char kDokeUaChMobileSwitch[] = "doke-ua-ch-mobile";
  constexpr char kDokeWebRtcIpHandlingPolicySwitch[] = "force-webrtc-ip-handling-policy";
 +constexpr char kDokeWindowSizeSwitch[] = "window-size";
 +constexpr char kDokeDeviceScaleFactorSwitch[] = "force-device-scale-factor";
@@ -23,5 +21,5 @@ diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
 +    AppendStringSwitchIfAbsent(command_line, kDokeWindowSizeSwitch, *fingerprint, "window_size");
 +    AppendStringSwitchIfAbsent(command_line, kDokeDeviceScaleFactorSwitch, *fingerprint, "device_scale_factor_arg");
 +    AppendStringSwitchIfAbsent(command_line, kDokeTouchEventsSwitch, *fingerprint, "touch_events");
-     MaybeLogDokeUaClientHints(*fingerprint);
+     MaybeApplyDokeUaClientHints(command_line, *fingerprint);
    }

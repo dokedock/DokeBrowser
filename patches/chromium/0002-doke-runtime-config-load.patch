@@ -35,7 +35,7 @@ diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
  
  int MaybeRunDokeProbe(const base::CommandLine& command_line) {
    if (!command_line.HasSwitch(kDokeProbeSwitch)) {
-@@ -122,6 +129,51 @@ int MaybeRunDokeProbe(const base::CommandLine& command_line) {
+@@ -122,6 +129,52 @@ int MaybeRunDokeProbe(const base::CommandLine& command_line) {
    return 0;
  }
  
@@ -47,7 +47,7 @@ diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
 +  const base::FilePath config_path =
 +      command_line.GetSwitchValuePath(kDokeRuntimeConfigSwitch);
 +  if (config_path.empty()) {
-+    std::fputs("Doke runtime config path is empty\n", stderr);
++    std::fprintf(stderr, "%s", "Doke runtime config path is empty\n");
 +    return;
 +  }
 +
@@ -58,14 +58,15 @@ diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
 +    return;
 +  }
 +
-+  std::optional<base::Value> parsed = base::JSONReader::Read(contents);
-+  if (!parsed || !parsed->is_dict()) {
++  std::optional<base::DictValue> parsed =
++      base::JSONReader::ReadDict(contents, base::JSON_PARSE_RFC);
++  if (!parsed) {
 +    std::fprintf(stderr, "Doke runtime config is not a JSON object: %s\n",
 +                 config_path.AsUTF8Unsafe().c_str());
 +    return;
 +  }
 +
-+  const base::Value::Dict& root = parsed->GetDict();
++  const base::DictValue& root = *parsed;
 +  const std::string* schema = root.FindString("schema");
 +  if (!schema || *schema != kDokeRuntimeSchema) {
 +    std::fprintf(stderr, "Doke runtime config schema mismatch: %s\n",

@@ -6,6 +6,14 @@ Doke-Rollback: Remove this patch from patches/chromium/series and rebuild Chromi
 diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
 --- a/chrome/app/chrome_main.cc
 +++ b/chrome/app/chrome_main.cc
+@@ -20,6 +20,7 @@
+ #include "base/functional/bind.h"
+ #include "base/functional/callback_helpers.h"
+ #include "base/json/json_reader.h"
++#include "base/json/json_writer.h"
+ #include "base/no_destructor.h"
+ #include "base/sampling_heap_profiler/poisson_allocation_sampler.h"
+ #include "base/time/time.h"
 @@ -55,6 +55,7 @@ std::optional<base::CommandLine>& GetInitialCommandLineStorage() {
    return *initial_command_line;
  }
@@ -14,24 +22,72 @@ diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
  constexpr char kDokeProbeSwitch[] = "doke-probe";
  constexpr char kDokeRuntimeConfigSwitch[] = "doke-runtime-config";
  constexpr char kDokeRuntimeSchema[] = "doke_profile_runtime.v1";
-@@ -84,6 +85,30 @@ void AppendStringSwitchIfAbsent(base::CommandLine& command_line,
+@@ -59,5 +60,14 @@ constexpr char kDokeRuntimeSchema[] = "doke_profile_runtime.v1";
+ constexpr char kDokeUserAgentSwitch[] = "user-agent";
+ constexpr char kDokeLanguageSwitch[] = "lang";
++constexpr char kDokeUaChBrandsSwitch[] = "doke-ua-ch-brands";
++constexpr char kDokeUaChFullVersionListSwitch[] = "doke-ua-ch-full-version-list";
++constexpr char kDokeUaChFullVersionSwitch[] = "doke-ua-ch-full-version";
++constexpr char kDokeUaChPlatformSwitch[] = "doke-ua-ch-platform";
++constexpr char kDokeUaChPlatformVersionSwitch[] = "doke-ua-ch-platform-version";
++constexpr char kDokeUaChArchitectureSwitch[] = "doke-ua-ch-architecture";
++constexpr char kDokeUaChModelSwitch[] = "doke-ua-ch-model";
++constexpr char kDokeUaChBitnessSwitch[] = "doke-ua-ch-bitness";
++constexpr char kDokeUaChMobileSwitch[] = "doke-ua-ch-mobile";
+ 
+ void AppendStringSwitchIfAbsent(base::CommandLine& command_line,
+                                 const char* switch_name,
+@@ -84,6 +94,82 @@ void AppendStringSwitchIfAbsent(base::CommandLine& command_line,
    command_line.AppendSwitchASCII(switch_name, *value);
  }
  
-+void MaybeLogDokeUaClientHints(const base::Value::Dict& fingerprint) {
-+  const base::Value::Dict* hints = fingerprint.FindDict(kDokeUaClientHintsKey);
++void AppendDokeBoolSwitchIfAbsent(base::CommandLine& command_line,
++                                  const char* switch_name,
++                                  const base::DictValue& dict,
++                                  const char* key) {
++  if (command_line.HasSwitch(switch_name)) {
++    return;
++  }
++  std::optional<bool> value = dict.FindBool(key);
++  if (!value.has_value()) {
++    return;
++  }
++  command_line.AppendSwitchASCII(switch_name, value.value() ? "true" : "false");
++}
++
++void AppendJsonListSwitchIfAbsent(base::CommandLine& command_line,
++                                  const char* switch_name,
++                                  const base::DictValue& dict,
++                                  const char* key) {
++  if (command_line.HasSwitch(switch_name)) {
++    return;
++  }
++  const base::ListValue* values = dict.FindList(key);
++  if (!values || values->empty()) {
++    return;
++  }
++  std::string json;
++  if (!base::JSONWriter::Write(*values, &json) || json.empty()) {
++    return;
++  }
++  command_line.AppendSwitchASCII(switch_name, json);
++}
++
++void MaybeApplyDokeUaClientHints(base::CommandLine& command_line,
++                                 const base::DictValue& fingerprint) {
++  const base::DictValue* hints = fingerprint.FindDict(kDokeUaClientHintsKey);
 +  if (!hints) {
 +    return;
 +  }
 +
-+  const base::Value::List* brands = hints->FindList("brands");
-+  const base::Value::List* full_version_list =
++  const base::ListValue* brands = hints->FindList("brands");
++  const base::ListValue* full_version_list =
 +      hints->FindList("fullVersionList");
 +  const std::string* platform = hints->FindString("platform");
 +  const std::string* full_version = hints->FindString("fullVersion");
 +
 +  if (!brands || !full_version_list || !platform || !full_version) {
-+    std::fputs("Doke UA-CH metadata is incomplete\n", stderr);
++    std::fprintf(stderr, "%s", "Doke UA-CH metadata is incomplete\n");
 +    return;
 +  }
 +
@@ -40,6 +96,25 @@ diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
 +               "brands=%zu fullVersionList=%zu\n",
 +               platform->c_str(), full_version->c_str(), brands->size(),
 +               full_version_list->size());
++
++  AppendJsonListSwitchIfAbsent(command_line, kDokeUaChBrandsSwitch, *hints,
++                               "brands");
++  AppendJsonListSwitchIfAbsent(command_line, kDokeUaChFullVersionListSwitch,
++                               *hints, "fullVersionList");
++  AppendStringSwitchIfAbsent(command_line, kDokeUaChFullVersionSwitch, *hints,
++                             "fullVersion");
++  AppendStringSwitchIfAbsent(command_line, kDokeUaChPlatformSwitch, *hints,
++                             "platform");
++  AppendStringSwitchIfAbsent(command_line, kDokeUaChPlatformVersionSwitch,
++                             *hints, "platformVersion");
++  AppendStringSwitchIfAbsent(command_line, kDokeUaChArchitectureSwitch, *hints,
++                             "architecture");
++  AppendStringSwitchIfAbsent(command_line, kDokeUaChModelSwitch, *hints,
++                             "model");
++  AppendStringSwitchIfAbsent(command_line, kDokeUaChBitnessSwitch, *hints,
++                             "bitness");
++  AppendDokeBoolSwitchIfAbsent(command_line, kDokeUaChMobileSwitch, *hints,
++                               "mobile");
 +}
 +
  int MaybeRunDokeProbe(const base::CommandLine& command_line) {
@@ -49,7 +124,7 @@ diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
    if (fingerprint) {
      AppendStringSwitchIfAbsent(command_line, kDokeUserAgentSwitch, *fingerprint, "user_agent");
      AppendStringSwitchIfAbsent(command_line, kDokeLanguageSwitch, *fingerprint, "language");
-+    MaybeLogDokeUaClientHints(*fingerprint);
++    MaybeApplyDokeUaClientHints(command_line, *fingerprint);
    }
  
    std::fprintf(stderr, "Doke runtime config loaded for profile %s\n",

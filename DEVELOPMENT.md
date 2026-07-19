@@ -328,6 +328,6 @@ SQLite 迁移要保持向后兼容。旧 Profile 默认：
 5. 已完成：`DokeChromiumEngine` 启动本地自研 Chromium 二进制并接入参数规范。
 6. 已完成：建立 Chromium 源码补丁文档、patch queue 校验、源码 checkout 绑定/校验与构建入口。
 7. 已完成：真实 Chromium checkout / depot_tools 链路已建立，`third_party/chromium/src` 当前为 ready 状态，HEAD `534c1497c1`，并已成功应用 `0001` 到 `0016` Doke patch queue。
-8. 进行中：真实 Doke Chromium 构建链路。2026-07-18 已选中 Xcode 26.6，`python3 tools/doke_chromium_build_prereq.py` 通过；官方 Metal 构建仍因缺少 Apple MetalToolchain 阻塞，`xcrun metal --version` 报缺失组件，`xcodebuild -downloadComponent MetalToolchain` 暂无法从 Apple catalog 取得匹配包。
-9. 进行中：临时 no-Metal 验证构建。`out/Doke/args.gn` 临时关闭 `angle_enable_metal` / `dawn_enable_metal` 后 `gn gen out/Doke` 通过；已修复 `LASTCHANGE.committime`、`gpu/webgpu/DAWN_VERSION`、DevTools Rollup native 包和 Go cache 路径问题；`bash tools/build_doke_chromium.sh` 已推进到 `12060/45799` 且未出现新的编译错误，但尚未完成最终二进制产物和 `--doke-probe` 启动验证。
-10. 下一步：继续完成 no-Metal 验证构建，若通过则执行 `--doke-probe`、`--version`、Agent `engine.probe` 和最小 `profile.start` 验证；随后记录检测基线。正式 macOS GPU 构建需等 Xcode 26.6 对应 MetalToolchain 可安装，或换用带完整 Metal 组件的 Xcode 包。
+8. 已完成：真实 Doke Chromium 第一版可交付构建。2026-07-19 使用 Xcode 26.6，`out/Doke/args.gn` 为 `angle_enable_metal = false`、`dawn_enable_metal = true`，`bash tools/build_doke_chromium.sh` 已完成 `chrome` 目标并产出 `third_party/chromium/src/out/Doke/Chromium.app`。
+9. 已完成：第一版交付验证。已通过真实二进制 `--doke-probe` / `--version`、Agent `engine.probe`、最小 `profile.start` / `profile.stop` 和 `Doke/runtime.json` 校验；已修复真实启动暴露的 UA-CH override 阻塞读文件问题，改为启动期 runtime JSON -> Doke UA-CH switches -> `GetUserAgentMetadata()` 读取 switches。
+10. 下一步：进入检测基线与能力晋级。先用 BrowserScan、CreepJS、FingerprintJS demo、deviceandbrowserinfo、bot.incolumitas 记录第一版真实 Doke Chromium 基线；正式 macOS 全 Metal/ANGLE Metal 发布仍需等 Xcode 26.6 对应 MetalToolchain 可安装，或换用带完整 Metal 组件的 Xcode 包。

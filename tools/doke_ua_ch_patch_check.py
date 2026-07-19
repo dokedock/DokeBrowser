@@ -7,7 +7,13 @@ from pathlib import Path
 
 REQUIRED_TOKENS = [
     "ua_client_hints",
-    "MaybeLogDokeUaClientHints",
+    "MaybeApplyDokeUaClientHints",
+    "base/json/json_writer.h",
+    "AppendJsonListSwitchIfAbsent",
+    "doke-ua-ch-brands",
+    "doke-ua-ch-full-version-list",
+    "doke-ua-ch-full-version",
+    "doke-ua-ch-platform",
     "FindDict(kDokeUaClientHintsKey)",
     "FindList(\"brands\")",
     "FindList(\"fullVersionList\")",
@@ -30,8 +36,8 @@ def check_patch(path):
         errors.append("patch must touch chrome/app/chrome_main.cc")
     if "native_fingerprint" in text:
         errors.append("UA-CH ingress patch must not claim native_fingerprint capability")
-    if "MaybeLogDokeUaClientHints(*fingerprint);" not in text:
-        errors.append("runtime config loader must call UA-CH metadata ingress")
+    if "MaybeApplyDokeUaClientHints(command_line, *fingerprint);" not in text:
+        errors.append("runtime config loader must bridge UA-CH metadata to Doke switches")
     return errors
 
 

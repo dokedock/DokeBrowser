@@ -24,6 +24,8 @@ if ! python3 "$ROOT_DIR/tools/doke_chromium_build_prereq.py" --src "$SRC_DIR"; t
   exit 4
 fi
 
+python3 "$ROOT_DIR/tools/ensure_chromium_generated_versions.py" --src "$SRC_DIR"
+
 cd "$SRC_DIR"
 
 export GOCACHE="${DOKE_GO_CACHE:-$SRC_DIR/$OUT_DIR/.gocache}"
@@ -68,7 +70,7 @@ ARGS
   echo "Created default $OUT_DIR/args.gn. Review it before production builds."
 fi
 
-if [[ ! -f "$OUT_DIR/build.ninja" ]]; then
+if [[ ! -f "$OUT_DIR/build.ninja" || "$OUT_DIR/args.gn" -nt "$OUT_DIR/build.ninja" ]]; then
   "$GN_BIN" gen "$OUT_DIR"
 fi
 
